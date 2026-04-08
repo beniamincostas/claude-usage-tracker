@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+*.app
+dist/
+Theme.swift.backup
+.DS_Store
