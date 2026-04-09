@@ -6,38 +6,51 @@
 - **OAuth login** — authenticate directly with Anthropic via browser (PKCE flow)
 - **Auth choice screen** — pick OAuth or Claude Code Keychain on first launch
 - **Switch Account** — change auth method anytime from the popover footer
-- **Auth method label** — footer shows "OAuth" or "Keychain" so you know which is active
-- **Update checker** — notifies on launch if a newer GitHub release exists, shows changelog
+- **Simple / Detailed toggle** — segmented control to show/hide token breakdowns
+- **Token data hints** — contextual messages when Details is ON but data is missing
+- **Status banners** — runtime error messages in the popover (expired token, missing CLI, etc.)
+- **Update checker** — notifies on launch if a newer GitHub release exists with changelog
+- **Auth method label** — footer shows "OAuth" or "Keychain"
+
+### Security
+- PKCE with SHA-256 code challenge + CSRF state validation (rejects bare codes)
+- Own token storage in Keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
+- Refresh gate prevents concurrent token refresh races
+- Network errors preserve refresh tokens (no unnecessary session loss)
+- Keychain-locked detection (sleep/wake) waits instead of logging out
+- No debug logging in production (tokens never written to disk)
+- Update checker validates URLs (https + github.com only)
+- Error messages truncated (no server response leaked to UI)
+
+### Install
+- Resilient install.sh with per-step ✓/✗ summary
+- Pre-checks for Claude Code CLI and jq (info only, never block)
+- Specific resolution commands for each missing dependency
+- Fallback app launch if LaunchAgent fails
 
 ### Improvements
-- No Claude Code dependency for API data (OAuth mode)
-- Own token storage in Keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
-- Auto token refresh every 30 min (no manual re-login)
-- Refresh gate prevents concurrent refresh races
-- Logout properly cancels all polling, watchers, and timers
+- Smart token refresh — sleeps until actual expiry, not fixed 30min
+- OAuth users get active polling rate (was blocked by keychainApproved check)
+- logout() clears all auth state including authMethod
 - connectOAuth cancels old polling before switching token source
-- No-token detection bounces user to auth screen (no blank dashboard)
-- URL validation on update checker (https + github.com only)
-- Error messages truncated (no raw server response leaked to UI)
-- Existing refresh token preserved when server omits it in response
+- stopAndReset cleans up all watchers, timers, and polling tasks
+- Cached ISO8601DateFormatter for countdown functions
+- Reactive auth method label via @AppStorage
+- Cleaned dead code: debug logging, cost columns, unused format variables
 
 ### From v1.3.0
 - Bundled statusline.sh for token breakdowns
-- First-launch consent dialog for Keychain access
-- jq and Claude Code CLI dependency checks during install
-- Statusline backup before overwriting
 - 16 security and logic fixes
 - 8 token counting fixes
 - Removed inaccurate cost estimates from statusline
-- Cleaner model names (stripped "[1m]" suffix)
+- Cleaner model names and statusline display
 
 ## v1.3.0 (2026-04-09)
 
 ### New Features
 - Bundled statusline.sh — token breakdowns work out of the box
 - First-launch consent dialog for Keychain access
-- jq dependency check during install
-- Claude Code CLI check during install
+- jq and Claude Code CLI dependency checks during install
 - Statusline backup before overwriting
 - Restart reminder after install
 

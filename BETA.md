@@ -1,93 +1,158 @@
-# Beta v2.0 — OAuth Authentication
+# Beta v2.0 — OAuth + Unified Auth
 
-## What's Different from v1.3.0
+## Overview
 
-v1.3.0 reads Claude Code's OAuth token from macOS Keychain. v2.0 adds a proper OAuth login flow — users authenticate directly with Anthropic via browser. No Keychain reading from other apps.
+v2.0 adds a proper OAuth login flow. Users authenticate directly with Anthropic via browser — no Keychain reading from other apps. Keychain mode remains as a fallback for users who prefer it.
+
+## Feature Comparison
 
 | Feature | v1.3.0 | v2.0 Beta |
 |---------|--------|-----------|
-| Auth method | Claude Code Keychain only | OAuth login OR Keychain (user choice) |
+| Auth method | Keychain only | OAuth OR Keychain (user choice) |
 | Claude Code required | Yes (for API data) | No (OAuth works independently) |
-| Keychain access | Reads another app's token | Stores own tokens in own Keychain entry |
-| Token refresh | Depends on Claude Code | App handles its own refresh (every 30 min) |
-| Re-login frequency | Never (Claude Code handles it) | Once; auto-refreshes as long as app runs |
+| Keychain access | Reads another app's token | Stores own tokens |
+| Token refresh | Depends on Claude Code | App handles its own (smart refresh) |
+| Re-login | Never | Once; auto-refreshes while app runs |
+| Token details | Always shown | Toggle (Simple / Detailed) |
+| Update check | No | Yes (on launch, from GitHub) |
+| Error messages | Basic | Contextual with resolution steps |
+
+## Experience Tiers
+
+**Tier 1 — OAuth + Detailed** (best):
+- All percentages, countdowns, alerts + token breakdowns per model
+- Needs: OAuth login + Claude Code CLI + jq + statusline
+
+**Tier 2 — OAuth + Simple** (good):
+- Percentages, countdowns, alerts, extra usage credits
+- Needs: OAuth login only
+
+**Tier 3 — Keychain + Simple** (fallback):
+- Same as Tier 2 but uses Claude Code's token
+- Needs: Claude Code CLI installed + logged in
 
 ## OAuth Flow
 
-1. User clicks "Login with Anthropic" in the app
+1. User clicks "Login with Anthropic"
 2. Browser opens to `claude.ai/oauth/authorize` with PKCE challenge
-3. User logs in with their Anthropic account
-4. Browser shows a `code#state` string
+3. User logs in with Anthropic account
+4. Browser shows `code#state` string
 5. User pastes it into the app
 6. App exchanges code for access + refresh tokens
-7. Tokens stored in app's own Keychain (`com.fiskaly.claude-usage-tracker.oauth`)
-8. Auto-refresh every 30 min — no manual re-login needed
+7. Tokens stored in app's own Keychain
+8. Smart refresh: sleeps until 5min before expiry, refreshes automatically
 
-## Technical Details
+## Error Handling
 
-### New Files
+Every error shows: what happened, why, and how to fix it.
+
+### Auth Screen Messages
+| Situation | Message |
+|-----------|---------|
+| Session expired | "Session expired. Please log in again." |
+| No saved login | "No saved login found. Please authenticate." |
+| Network error | "Cannot reach Anthropic. Check your connection." |
+| Fresh launch | No message — just the choice buttons |
+
+### Popover Status Banners
+| Situation | Message |
+|-----------|---------|
+| Keychain 401 | "Token expired — run any prompt in Claude Code to refresh, or switch to OAuth" |
+| Keychain no token | "Waiting for Claude Code — run 'claude' in Terminal to log in" |
+| Rate limited | Orange dot (silent backoff) |
+| Network error | Silent retry |
+
+### Token Details Hints (toggle ON, no data)
+| Check | Hint |
+|-------|------|
+| statusline.sh missing | "Re-run install.sh to set up token tracking" |
+| monthly_usage.json missing | "Start a Claude Code session for token data" |
+| No usage data | "Waiting for Claude Code session data..." |
+
+## Install Summary
+
+install.sh reports per-step results:
+```
+  ✓ App installed to ~/Applications
+  ✓ Autostart at login
+  ✓ Statusline (token tracking)
+  ✗ Claude Code settings configured
+  ✓ App launched
+
+  Notes:
+    - jq not found — token breakdowns need it: brew install jq
+```
+
+## Security
+
+- PKCE SHA-256 + CSRF state validation (bare codes rejected)
+- Tokens: `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
+- Refresh gate: single concurrent refresh allowed
+- Network errors preserve tokens (no unnecessary logout)
+- Keychain-locked (sleep/wake): waits, doesn't logout
+- No debug logging (tokens never on disk)
+- Update URLs validated (https + github.com only)
+- Error messages truncated (no server data leaked)
+
+## Token Lifecycle
+
+- Access token: ~8 hours (Anthropic default), auto-refreshed before expiry
+- Refresh token: valid as long as app is polling (every 2-5 min)
+- App fully quit for weeks → refresh token may expire → re-login needed
+- Network outage → tokens preserved, retries on recovery
+
+## Files Changed from v1.3.0
+
+### New
 - `OAuthManager.swift` — PKCE flow, token exchange, refresh, Keychain storage
-- `AuthChoiceView.swift` — auth method selection UI
+- `AuthChoiceView.swift` — auth method selection UI with contextual messages
 - `UpdateChecker.swift` — GitHub release version check
 
-### Modified Files
-- `App.swift` — unified auth state (OAuth + Keychain), logout, update check
+### Modified
+- `App.swift` — unified auth state (@AppStorage-driven), logout, update check
 - `UsageAPIClient.swift` — optional OAuthManager for token source
-- `UsageViewModel.swift` — connectOAuth(), stopAndReset()
-- `UsagePopoverView.swift` — Switch Account button, auth method label
-
-### Security
-- PKCE with SHA-256 code challenge
-- CSRF state validation on code exchange
-- Tokens stored with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
-- Refresh gate prevents concurrent token refresh races
-- No-token detection bounces to auth screen
-- Update checker validates URLs (https + github.com only)
-- Error messages truncated (no server response leaked)
-
-### Token Lifecycle
-- Access token: ~1 hour, auto-refreshed every 30 min
-- Refresh token: valid as long as there's activity (app polls every 2-5 min)
-- Sleep mode (planned): stop polling when Claude is closed, token refreshes only when Claude is active
-- Re-login required only after extended inactivity (weeks) with app fully quit
+- `UsageViewModel.swift` — connectOAuth(), stopAndReset(), statusMessage, tokenDataHint
+- `UsagePopoverView.swift` — Simple/Detailed toggle, status banner, auth label
+- `Components/PeriodUsageView.swift` — hides token pills when totalTokens == 0
+- `create-dmg.sh` — resilient install.sh, version 2.0.0-beta
+- `statusline.sh` — cleaned dead code (cost columns, unused format vars)
 
 ## Testing
 
-### Install Beta
+### Fresh Install
 ```bash
-# Beta runs alongside v1.3.0 as a separate app
+bash "/Volumes/ClaudeUsageTracker/install.sh"
+```
+
+### Run Beta (alongside v1.3.0)
+```bash
 open ~/Applications/ClaudeUsageTrackerBeta.app
 ```
 
-### Test OAuth Flow
-1. Click beta menu bar icon
-2. Choose "Login with Anthropic"
-3. Browser opens — log in
-4. Copy the code#state string
-5. Paste in the app, click Submit
-6. Verify data appears within 2 minutes
+### Test OAuth
+1. Click beta icon → "Login with Anthropic"
+2. Browser opens → log in → copy code#state
+3. Paste → Submit → verify data within 2 min
 
-### Test Keychain Flow
-1. Click beta menu bar icon
-2. Choose "Use Claude Code Keychain"
-3. Approve the consent dialog
-4. Verify data appears
+### Test Keychain
+1. Click beta icon → "Use Claude Code Keychain"
+2. Approve → verify data appears
 
-### Test Switching
+### Test Switch
 1. Click "Switch Account" in footer
-2. Choose the other auth method
-3. Verify data appears with new method
+2. Choose other method → verify data
 
-### Test Logout
-1. Click "Switch Account"
-2. Verify auth choice screen appears
-3. Verify no data is being fetched (check menu bar)
-
-## Known Limitations
-- Beta uses bundle ID `com.fiskaly.claude-usage-tracker-beta` (separate from v1.3.0)
-- OAuth code must be manually pasted (no localhost redirect server)
-- Refresh token may expire after weeks of app being fully quit
-- Token breakdowns still require Claude Code + statusline + jq (both OAuth and Keychain)
+### Test Toggle
+1. Click "Simple | Detailed" in header
+2. Simple: percentages only, no token pills
+3. Detailed: full token breakdowns + today/monthly/all-time
 
 ## Branch
-`beta/oauth-login` — not merged to main, v1.3.0 on main is untouched.
+
+`beta/oauth-login` — not merged to main. v1.3.0 on main is untouched.
+
+### Safe Points
+- `53b2c81` — before toggle
+- `5378c10` — before error handling
+- `aac17a4` — before 26-fix review
+- `ef2d3f9` — current (all fixes applied)
