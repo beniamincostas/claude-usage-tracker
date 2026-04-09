@@ -668,37 +668,7 @@ if [ -n "$DAY_PCT_RAW" ]; then
     "$DAY_TOTAL_FMT" "$DAY_RESET_STR"
 fi
 
-# --- 4. Calendar-day row (midnight-to-midnight, always shown once we have data) ---
-if [ "$CAL_DAY_IN" -gt 0 ] || [ "$CAL_DAY_OUT" -gt 0 ]; then
-  # Time until next midnight
-  NEXT_MIDNIGHT=$(date -v+1d -v0H -v0M -v0S +%s 2>/dev/null || \
-    date -d "tomorrow 00:00:00" +%s 2>/dev/null || \
-    echo $(( NOW_EPOCH + 86400 )))
-  CAL_DIFF=$(( NEXT_MIDNIGHT - NOW_EPOCH ))
-  CAL_RH=$(( CAL_DIFF / 3600 ))
-  CAL_RM=$(( (CAL_DIFF % 3600) / 60 ))
-  CAL_RESET_STR="resets in ${CAL_RH}h ${CAL_RM}m"
-
-  # Bar = today's tokens as % of this month's total (shows heavy vs light day)
-  # Falls back to time-of-day % if no monthly data yet
-  if [ "$MONTH_IN" -gt 0 ]; then
-    CAL_DAY_PCT=$(awk "BEGIN {p=int($CAL_DAY_IN/$MONTH_IN*100); if(p>100)p=100; print p}")
-  else
-    TODAY_SECS=$(date -v0H -v0M -v0S +%s 2>/dev/null || date -d "today 00:00:00" +%s 2>/dev/null || echo $(( NOW_EPOCH - 43200 )))
-    CAL_DAY_PCT=$(( (NOW_EPOCH - TODAY_SECS) * 100 / 86400 ))
-  fi
-  if [ "$CAL_DAY_PCT" -ge 90 ]; then CAL_COLOR="$RED"
-  elif [ "$CAL_DAY_PCT" -ge 70 ]; then CAL_COLOR="$YELLOW"
-  else CAL_COLOR="$CYAN"; fi
-  CAL_BAR=$(make_bar "$CAL_DAY_PCT")
-
-  print_row "Day" "$CAL_BAR" "$CAL_COLOR" "$CAL_DAY_PCT" \
-    "$CAL_DAY_IN_FMT"  "" \
-    "$CAL_DAY_OUT_FMT" "" \
-    "$CAL_DAY_TOTAL_FMT" "$CAL_RESET_STR"
-fi
-
-# --- 5. Weekly rate limit (only when data is available) ---
+# --- 4. Weekly rate limit (only when data is available) ---
 if [ -n "$WEEK_PCT_RAW" ]; then
   WEEK_PCT=$(echo "$WEEK_PCT_RAW" | cut -d. -f1)
   [ "$WEEK_PCT" -gt 100 ] && WEEK_PCT=100
@@ -729,21 +699,3 @@ if [ -n "$WEEK_PCT_RAW" ]; then
     "$WEEK_TOTAL_FMT" "$WEEK_RESET_STR"
 fi
 
-# --- 6. Monthly usage (always shown once we have any data) ---
-if [ "$MONTH_IN" -gt 0 ] || [ "$MONTH_OUT" -gt 0 ]; then
-  # Compute days remaining until end of month
-  DAYS_IN_MONTH=$(date -v+1m -v1d -v-1d +%d 2>/dev/null || date -d "$(date +%Y-%m-01) +1 month -1 day" +%d 2>/dev/null || echo 30)
-  TODAY_DAY=$(date +%d | sed 's/^0//')
-  DAYS_LEFT=$(( DAYS_IN_MONTH - TODAY_DAY ))
-  MONTH_RESET_STR="resets in ${DAYS_LEFT}d"
-
-  # Monthly bar: fraction of the month elapsed (days passed / days in month)
-  MONTH_ELAPSED_PCT=$(awk "BEGIN {printf \"%d\", ($TODAY_DAY - 1) / $DAYS_IN_MONTH * 100}")
-  [ "$MONTH_ELAPSED_PCT" -gt 100 ] && MONTH_ELAPSED_PCT=100
-  MONTH_BAR=$(make_bar "$MONTH_ELAPSED_PCT")
-
-  print_row "Monthly" "$MONTH_BAR" "$MAGENTA" "$MONTH_ELAPSED_PCT" \
-    "$MONTH_IN_FMT"  "" \
-    "$MONTH_OUT_FMT" "" \
-    "$MONTH_TOTAL_FMT" "$MONTH_RESET_STR"
-fi
