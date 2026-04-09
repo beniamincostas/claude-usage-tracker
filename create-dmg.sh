@@ -109,6 +109,21 @@ if [ ! -d "$SOURCE" ]; then
 fi
 
 # Check dependencies
+if ! command -v claude &>/dev/null; then
+    echo ""
+    echo "  ⚠ WARNING: Claude Code CLI not found."
+    echo "  The app requires Claude Code installed and logged in."
+    echo ""
+    echo "  To install: npm install -g @anthropic-ai/claude-code"
+    echo "  Then run: claude (and follow the login prompt)"
+    echo ""
+    read -p "  Continue anyway? [y/N] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
 if ! command -v jq &>/dev/null; then
     echo ""
     echo "  ⚠ WARNING: 'jq' is not installed."
@@ -171,6 +186,11 @@ STATUSLINE_DEST="${CLAUDE_DIR}/statusline.sh"
 
 if [ -f "$STATUSLINE_SRC" ]; then
     mkdir -p "$CLAUDE_DIR"
+    # Backup existing statusline if it differs from ours
+    if [ -f "$STATUSLINE_DEST" ] && ! diff -q "$STATUSLINE_SRC" "$STATUSLINE_DEST" &>/dev/null; then
+        cp "$STATUSLINE_DEST" "${STATUSLINE_DEST}.backup"
+        echo "  [3/5] Existing statusline backed up to statusline.sh.backup"
+    fi
     cp "$STATUSLINE_SRC" "$STATUSLINE_DEST"
     chmod +x "$STATUSLINE_DEST"
     echo "  [3/5] Statusline script installed"
@@ -206,6 +226,9 @@ echo "  [5/5] App launched — check your menu bar!"
 
 echo ""
 echo "  Done! No admin rights were needed."
+echo ""
+echo "  IMPORTANT: Restart Claude Code for token tracking to activate."
+echo "  Close your current Claude session and run 'claude' again."
 echo ""
 echo "  To uninstall later (paste into Terminal):"
 echo "    pkill ${APP_NAME}"
