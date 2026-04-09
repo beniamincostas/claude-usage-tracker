@@ -108,6 +108,28 @@ if [ ! -d "$SOURCE" ]; then
     exit 1
 fi
 
+# Check dependencies
+if ! command -v jq &>/dev/null; then
+    echo ""
+    echo "  ⚠ WARNING: 'jq' is not installed."
+    echo "  The app will show rate limit percentages (from API),"
+    echo "  but token breakdowns will not work without jq."
+    echo ""
+    echo "  To install jq:"
+    echo "    brew install jq"
+    echo ""
+    echo "  If you don't have Homebrew:"
+    echo "    /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    echo "    brew install jq"
+    echo ""
+    read -p "  Continue without jq? [y/N] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "  Install jq first, then re-run this script."
+        exit 1
+    fi
+fi
+
 # 1. Copy app to ~/Applications
 mkdir -p "$DEST_DIR"
 pkill -f "${APP_NAME}" 2>/dev/null || true
