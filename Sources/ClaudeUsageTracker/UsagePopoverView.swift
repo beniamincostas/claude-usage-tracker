@@ -2,6 +2,7 @@ import SwiftUI
 
 struct UsagePopoverView: View {
     @ObservedObject var viewModel: UsageViewModel
+    var onLogout: (() -> Void)?
     @State private var allTimeExpanded = false
 
     var body: some View {
@@ -360,8 +361,32 @@ struct UsagePopoverView: View {
 
     // MARK: - Footer
 
+    private var authMethodLabel: String {
+        switch UserDefaults.standard.string(forKey: "authMethod") {
+        case "oauth": return "OAuth"
+        case "keychain": return "Keychain"
+        default: return ""
+        }
+    }
+
     private var footer: some View {
         HStack(spacing: 8) {
+            if let onLogout {
+                Button(action: onLogout) {
+                    Text("Switch Account")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Theme.bgCardHover, in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(authMethodLabel)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.textTertiary)
+
             Spacer()
 
             Button(action: { NSApplication.shared.terminate(nil) }) {

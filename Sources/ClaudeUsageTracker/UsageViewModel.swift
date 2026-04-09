@@ -13,7 +13,7 @@ final class UsageViewModel: ObservableObject {
 
     enum DataSource { case api, fileOnly }
 
-    private let apiClient = UsageAPIClient()
+    private var apiClient = UsageAPIClient()
     private var apiPollingTask: Task<Void, Never>?
     private var pollInterval: TimeInterval = 120          // base: 2 min between API calls (active)
     private let idlePollInterval: TimeInterval = 300      // 5 min between API calls (idle)
@@ -64,7 +64,13 @@ final class UsageViewModel: ObservableObject {
         }
     }
 
-    /// Begin all monitoring — call only after user consent is confirmed.
+    /// Connect with OAuthManager — replaces Keychain-based token reading.
+    func connectOAuth(_ manager: OAuthManager) {
+        apiClient = UsageAPIClient(oauthManager: manager)
+        start()
+    }
+
+    /// Begin all monitoring — call only after user consent/login is confirmed.
     func start() {
         loadUsageData()
         loadStatsCache()

@@ -52,6 +52,11 @@ struct ExtraUsageAPI: Codable {
 
 actor UsageAPIClient {
     private let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    private let oauthManager: OAuthManager?
+
+    init(oauthManager: OAuthManager? = nil) {
+        self.oauthManager = oauthManager
+    }
 
     enum FetchError {
         case noToken
@@ -106,10 +111,16 @@ actor UsageAPIClient {
         }
     }
 
-    /// Read token from Keychain via the `security` CLI each time.
-    /// Uses the system binary which is trusted by Keychain ACLs — no user prompt.
-    /// 5-second timeout prevents polling loop from freezing if security CLI hangs.
+    /// Get token — from OAuthManager (own login) or Keychain fallback (Claude Code's token).
     private func getToken() async -> String? {
+        if let manager = oauthManager {
+            return await manager.getAccessToken()
+        }
+        return await getTokenFromKeychain()
+    }
+
+    /// Fallback: Read token from Keychain via the `security` CLI.
+    private func getTokenFromKeychain() async -> String? {
         let raw: String? = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
