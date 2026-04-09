@@ -21,6 +21,8 @@ struct ClaudeUsageTrackerApp: App {
         if method == "keychain" && UsageViewModel.hasConsent {
             _isAuthenticated = State(initialValue: true)
         }
+        // Check for updates on launch
+        Task { await UpdateChecker().checkForUpdate() }
     }
 
     var body: some Scene {
