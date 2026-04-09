@@ -82,6 +82,9 @@ cp -R "${APP_DIR}" "${DMG_STAGING}/"
 # Symlink to system Applications folder (standard drag-to-install target)
 ln -s /Applications "${DMG_STAGING}/Applications"
 
+# Copy statusline.sh to staging (will be installed to ~/.claude/)
+cp "${SCRIPT_DIR}/statusline.sh" "${DMG_STAGING}/statusline.sh"
+
 # Create the install script inside DMG — no admin rights required
 cat > "${DMG_STAGING}/install.sh" << 'INSTALL'
 #!/bin/bash
@@ -137,11 +140,46 @@ PLISTEOF
 
 launchctl unload "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
 launchctl load "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
-echo "  [2/3] Autostart configured (launches at login)"
+echo "  [2/5] Autostart configured (launches at login)"
 
-# 3. Launch the app now
+# 3. Install statusline.sh for token tracking
+CLAUDE_DIR="$HOME/.claude"
+STATUSLINE_SRC="${SCRIPT_DIR}/statusline.sh"
+STATUSLINE_DEST="${CLAUDE_DIR}/statusline.sh"
+
+if [ -f "$STATUSLINE_SRC" ]; then
+    mkdir -p "$CLAUDE_DIR"
+    cp "$STATUSLINE_SRC" "$STATUSLINE_DEST"
+    chmod +x "$STATUSLINE_DEST"
+    echo "  [3/5] Statusline script installed"
+else
+    echo "  [3/5] Statusline script not found — skipping (token breakdown won't be available)"
+fi
+
+# 4. Configure statusline in Claude Code settings.json
+SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
+if command -v python3 &>/dev/null; then
+    python3 -c "
+import json, os, sys
+path = sys.argv[1]
+sl_path = sys.argv[2]
+try:
+    with open(path) as f:
+        settings = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    settings = {}
+settings['statusLine'] = {'type': 'command', 'command': sl_path}
+with open(path, 'w') as f:
+    json.dump(settings, f, indent=2)
+" "$SETTINGS_FILE" "$STATUSLINE_DEST"
+    echo "  [4/5] Claude Code settings updated (statusline enabled)"
+else
+    echo "  [4/5] python3 not found — add statusLine config to ~/.claude/settings.json manually"
+fi
+
+# 5. Launch the app now
 open "${DEST_DIR}/${APP_NAME}.app"
-echo "  [3/3] App launched — check your menu bar!"
+echo "  [5/5] App launched — check your menu bar!"
 
 echo ""
 echo "  Done! No admin rights were needed."
