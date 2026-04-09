@@ -1,4 +1,5 @@
 #!/bin/bash
+umask 077  # Files created by this script are user-only (0600)
 input=$(cat)
 
 # Parse all input fields in one jq call (one field per line preserves empty fields)
@@ -463,7 +464,7 @@ jq -n \
       | if length > 50 then .[(length - 50):] else . end
       | from_entries
     )
-  }' > "$USAGE_FILE"
+  }' > "${USAGE_FILE}.tmp" && mv "${USAGE_FILE}.tmp" "$USAGE_FILE"
 
 # -----------------------------------------------------------------------
 # Column layout

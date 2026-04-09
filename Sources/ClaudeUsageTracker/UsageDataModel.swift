@@ -167,12 +167,20 @@ struct ExtraTokenSnapshots: Codable {
 
     func save() {
         guard let data = try? JSONEncoder().encode(self) else { return }
-        let url = URL(fileURLWithPath: Self.filePath)
-        // Ensure ~/.claude/ exists (may not on a fresh machine)
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? data.write(to: url, options: .atomic)
+        let snapshot = self
+        _ = snapshot  // capture value type before dispatching
+        let filePath = Self.filePath
+        DispatchQueue.global(qos: .utility).async {
+            let url = URL(fileURLWithPath: filePath)
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: url, options: .atomic)
+            // Set file permissions to 0600 (user-only)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: filePath
+            )
+        }
     }
 }

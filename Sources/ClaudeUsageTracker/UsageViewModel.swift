@@ -38,22 +38,39 @@ final class UsageViewModel: ObservableObject {
     private var statsFileWatcher: FileWatcher?
     private var countdownTimer: DispatchSourceTimer?
 
+    private static let iso8601Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        return f
+    }()
+
     private static let claudeDir: String = {
         FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
     }()
     private static let usageFilePath: String = { claudeDir + "/monthly_usage.json" }()
     private static let statsCachePath: String = { claudeDir + "/stats-cache.json" }()
 
+    private static let consentKey = "keychainAccessApproved"
+
+    static var hasConsent: Bool {
+        UserDefaults.standard.bool(forKey: consentKey)
+    }
+
     init() {
         self.extraTokenSnapshots = ExtraTokenSnapshots.load()
 
+        // Only start monitoring after consent is granted
+        if Self.hasConsent {
+            start()
+        }
+    }
+
+    /// Begin all monitoring — call only after user consent is confirmed.
+    func start() {
         loadUsageData()
         loadStatsCache()
         setupFileWatchers()
         setupCountdownTimer()
-        if UserDefaults.standard.bool(forKey: "keychainAccessApproved") {
-            startAPIPolling()
-        }
+        startAPIPolling()
     }
 
     // MARK: - Rate Limit Percentage
@@ -152,6 +169,7 @@ final class UsageViewModel: ObservableObject {
     /// Wake up API polling — called when Claude activity is detected.
     /// Updates lastActivityTime so the loop uses the faster active interval.
     func wakeAPIPolling() {
+        guard Self.hasConsent else { return }
         lastActivityTime = .now
         // Restart loop if it was cancelled (shouldn't happen, but safety net)
         if apiPollingTask == nil {
@@ -261,14 +279,15 @@ final class UsageViewModel: ObservableObject {
         // 5-hour bucket
         if let pct = fiveHourPercentage, pct.value >= 100 {
             if extraTokenSnapshots.fiveHour == nil {
-                let now = ISO8601DateFormatter().string(from: .now)
+                let now = Self.iso8601Formatter.string(from: .now)
                 extraTokenSnapshots.fiveHour = ExtraTokenSnapshot(
                     snapshotTokens: totalTokens(for: .fiveHour),
                     snapshotAt: now
                 )
                 changed = true
             }
-        } else if extraTokenSnapshots.fiveHour != nil {
+        } else if extraTokenSnapshots.fiveHour != nil && apiUsage != nil {
+            // Only clear when API data is authoritative — avoid spurious reset on stale data
             extraTokenSnapshots.fiveHour = nil
             changed = true
         }
@@ -276,14 +295,14 @@ final class UsageViewModel: ObservableObject {
         // 7-day bucket
         if let pct = weekPercentage, pct.value >= 100 {
             if extraTokenSnapshots.sevenDay == nil {
-                let now = ISO8601DateFormatter().string(from: .now)
+                let now = Self.iso8601Formatter.string(from: .now)
                 extraTokenSnapshots.sevenDay = ExtraTokenSnapshot(
                     snapshotTokens: totalTokens(for: .week),
                     snapshotAt: now
                 )
                 changed = true
             }
-        } else if extraTokenSnapshots.sevenDay != nil {
+        } else if extraTokenSnapshots.sevenDay != nil && apiUsage != nil {
             extraTokenSnapshots.sevenDay = nil
             changed = true
         }
@@ -674,16 +693,14 @@ final class UsageViewModel: ObservableObject {
 
     // MARK: - Notifications
 
-    // Persisted to UserDefaults so thresholds aren't re-notified on app restart
+    // Cached in-memory, persisted to UserDefaults only when changed
     private static let notifiedDefaultsKey = "notifiedThresholds"
+    private var notifiedThresholds: Set<String> = {
+        Set(UserDefaults.standard.stringArray(forKey: notifiedDefaultsKey) ?? [])
+    }()
 
-    private static var notifiedThresholds: Set<String> {
-        get {
-            Set(UserDefaults.standard.stringArray(forKey: notifiedDefaultsKey) ?? [])
-        }
-        set {
-            UserDefaults.standard.set(Array(newValue), forKey: notifiedDefaultsKey)
-        }
+    private func persistNotifiedThresholds() {
+        UserDefaults.standard.set(Array(notifiedThresholds), forKey: Self.notifiedDefaultsKey)
     }
 
     func checkAndNotify() {
@@ -695,37 +712,46 @@ final class UsageViewModel: ObservableObject {
         guard let pct = percentage, !pct.isEstimated else { return }
         let value = pct.value
 
-        // Clear thresholds that are now above current usage (allows re-notification after reset)
+        // Only clear thresholds when API data is authoritative
+        guard apiUsage != nil else { return }
+
+        var changed = false
         let allThresholds: [Double] = [90, 95, 100]
         for threshold in allThresholds {
             if value < threshold {
-                Self.notifiedThresholds.remove("\(bucket)_\(Int(threshold))")
+                if notifiedThresholds.remove("\(bucket)_\(Int(threshold))") != nil {
+                    changed = true
+                }
             }
         }
 
         let thresholds: [(Double, String)] = [(100, "100%"), (95, "95%"), (90, "90%")]
         for (threshold, label) in thresholds {
             let key = "\(bucket)_\(Int(threshold))"
-            if value >= threshold && !Self.notifiedThresholds.contains(key) {
-                Self.notifiedThresholds.insert(key)
+            if value >= threshold && !notifiedThresholds.contains(key) {
+                notifiedThresholds.insert(key)
+                changed = true
                 sendNotification(
                     title: "Claude Usage Alert",
                     body: "\(bucket == "5h" ? "5-hour" : "7-day") usage at \(label) — \(countdown)"
                 )
-                break // Only send the highest un-notified threshold
+                break
             }
         }
+        if changed { persistNotifiedThresholds() }
     }
 
     private static var notificationAuthRequested = false
+    private static var notificationAuthGranted = false
 
     private func sendNotification(title: String, body: String) {
         let center = UNUserNotificationCenter.current()
 
-        // Request authorization lazily on first notification attempt (after UI is visible)
         if !Self.notificationAuthRequested {
             Self.notificationAuthRequested = true
-            center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                Task { @MainActor in Self.notificationAuthGranted = granted }
+            }
         }
 
         let content = UNMutableNotificationContent()

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CurrentSessionView: View {
-    let viewModel: UsageViewModel
+    @ObservedObject var viewModel: UsageViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

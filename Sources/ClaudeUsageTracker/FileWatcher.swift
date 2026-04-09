@@ -29,12 +29,10 @@ final class FileWatcher {
     }
 
     private func startDispatchSource() {
-        // Clean up previous source if re-establishing
+        // Clean up previous source — cancel handler owns the fd close
         dispatchSource?.cancel()
-        if fileDescriptor >= 0 {
-            close(fileDescriptor)
-            fileDescriptor = -1
-        }
+        dispatchSource = nil
+        fileDescriptor = -1  // old fd will be closed by cancel handler
 
         fileDescriptor = open(filePath, O_EVTONLY)
         guard fileDescriptor >= 0 else { return }

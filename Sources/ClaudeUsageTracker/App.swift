@@ -14,13 +14,9 @@ struct ClaudeUsageTrackerApp: App {
     static let authorLinkedIn = "https://linkedin.com/in/beniamincostas"
 
     init() {
-        if !Self.hasConsent {
+        if !UsageViewModel.hasConsent {
             Self.showConsentDialog()
         }
-    }
-
-    private static var hasConsent: Bool {
-        UserDefaults.standard.bool(forKey: "keychainAccessApproved")
     }
 
     private static func showConsentDialog() {

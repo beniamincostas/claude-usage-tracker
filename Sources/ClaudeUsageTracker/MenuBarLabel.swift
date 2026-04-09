@@ -53,39 +53,4 @@ struct MenuBarLabel: View {
         }
     }
 
-    private var iconColor: Color {
-        switch viewModel.fiveHourAlertLevel {
-        case .maxed100: return .red
-        case .critical95: return .red
-        case .warning90: return .orange
-        case .normal: return .secondary
-        }
-    }
-
-    private var textColor: Color {
-        switch viewModel.fiveHourAlertLevel {
-        case .maxed100, .critical95: return .red
-        case .warning90: return .orange
-        case .normal: return viewModel.isAPIDataFresh || viewModel.apiUsage == nil ? .primary : .secondary
-        }
-    }
-
-    private var alertBadge: String {
-        switch viewModel.fiveHourAlertLevel {
-        case .maxed100: return "LIMIT"
-        case .critical95: return "95%!"
-        case .warning90: return "90%"
-        case .normal: return ""
-        }
-    }
-
-    private var sevenDayIcon: String {
-        viewModel.sevenDayAlertLevel == .maxed100
-            ? "xmark.circle.fill"
-            : "exclamationmark.triangle.fill"
-    }
-
-    private var sevenDayColor: Color {
-        viewModel.sevenDayAlertLevel >= .critical95 ? .red : .orange
-    }
 }

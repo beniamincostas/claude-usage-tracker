@@ -108,9 +108,8 @@ actor UsageAPIClient {
 
     /// Read token from Keychain via the `security` CLI each time.
     /// Uses the system binary which is trusted by Keychain ACLs — no user prompt.
-    /// No caching — token never lingers in heap memory beyond this call.
+    /// 5-second timeout prevents polling loop from freezing if security CLI hangs.
     private func getToken() async -> String? {
-        // Run on background thread to avoid blocking the cooperative thread pool
         let raw: String? = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
@@ -119,43 +118,59 @@ actor UsageAPIClient {
                 let pipe = Pipe()
                 process.standardOutput = pipe
                 process.standardError = FileHandle.nullDevice
+
+                var resumed = false
+                let lock = NSLock()
+
+                func safeResume(_ value: String?) {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    guard !resumed else { return }
+                    resumed = true
+                    continuation.resume(returning: value)
+                }
+
+                // Watchdog: kill process after 5 seconds
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                    if process.isRunning { process.terminate() }
+                    safeResume(nil)
+                }
+
                 do {
                     try process.run()
                     process.waitUntilExit()
                     guard process.terminationStatus == 0 else {
-                        continuation.resume(returning: nil)
+                        safeResume(nil)
                         return
                     }
                     let data = pipe.fileHandleForReading.readDataToEndOfFile()
                     let result = String(data: data, encoding: .utf8)?
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                    continuation.resume(returning: result?.isEmpty == true ? nil : result)
+                    safeResume(result?.isEmpty == true ? nil : result)
                 } catch {
-                    continuation.resume(returning: nil)
+                    safeResume(nil)
                 }
             }
         }
 
         guard let raw, !raw.isEmpty else { return nil }
 
-        // Keychain stores nested JSON:
-        // {"claudeAiOauth":{"accessToken":"sk-ant-oat01-...","refreshToken":"...","expiresAt":...}}
-        if let jsonData = raw.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-            if let oauth = json["claudeAiOauth"] as? [String: Any],
-               let accessToken = oauth["accessToken"] as? String {
-                // Check expiresAt (ms timestamp) — reject expired tokens
-                if let expiresAt = oauth["expiresAt"] as? Double {
-                    let nowMs = Date.now.timeIntervalSince1970 * 1000
-                    if nowMs > expiresAt {
-                        return nil // token expired — CLI needs to refresh it
-                    }
-                }
-                return accessToken
+        // Parse only accessToken and expiresAt — avoid holding refreshToken in memory
+        guard let jsonData = raw.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            return nil
+        }
+
+        if let oauth = json["claudeAiOauth"] as? [String: Any] {
+            guard let accessToken = oauth["accessToken"] as? String else { return nil }
+            if let expiresAt = oauth["expiresAt"] as? Double {
+                let nowMs = Date.now.timeIntervalSince1970 * 1000
+                if nowMs > expiresAt { return nil }
             }
-            if let accessToken = json["access_token"] as? String {
-                return accessToken
-            }
+            return accessToken
+        }
+        if let accessToken = json["access_token"] as? String {
+            return accessToken
         }
         return nil
     }

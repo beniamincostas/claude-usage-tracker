@@ -139,6 +139,7 @@ cat > "${LAUNCH_AGENT_PLIST}" << PLISTEOF
 PLISTEOF
 
 launchctl unload "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
+launchctl load "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
 echo "  [2/5] Autostart configured (launches at login)"
 
 # 3. Install statusline.sh for token tracking
@@ -159,7 +160,7 @@ fi
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
 if command -v python3 &>/dev/null; then
     python3 -c "
-import json, os, sys
+import json, os, sys, tempfile
 path = sys.argv[1]
 sl_path = sys.argv[2]
 try:
@@ -168,16 +169,17 @@ try:
 except (FileNotFoundError, json.JSONDecodeError):
     settings = {}
 settings['statusLine'] = {'type': 'command', 'command': sl_path}
-with open(path, 'w') as f:
+tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+with os.fdopen(tmp_fd, 'w') as f:
     json.dump(settings, f, indent=2)
+os.replace(tmp_path, path)
 " "$SETTINGS_FILE" "$STATUSLINE_DEST"
     echo "  [4/5] Claude Code settings updated (statusline enabled)"
 else
     echo "  [4/5] python3 not found — add statusLine config to ~/.claude/settings.json manually"
 fi
 
-# 5. Launch the app now
-open "${DEST_DIR}/${APP_NAME}.app"
+# 5. App launched via LaunchAgent (RunAtLoad=true)
 echo "  [5/5] App launched — check your menu bar!"
 
 echo ""
