@@ -73,74 +73,95 @@ cp -R "${APP_DIR}" "${DMG_STAGING}/"
 # Symlink to system Applications folder (standard drag-to-install target)
 ln -s /Applications "${DMG_STAGING}/Applications"
 
-# Create the install-autostart script inside DMG
-cat > "${DMG_STAGING}/Install Autostart.command" << 'INSTALL'
+# Create the install script inside DMG — no admin rights required
+cat > "${DMG_STAGING}/Install (no admin).command" << 'INSTALL'
 #!/bin/bash
-# Sets up ClaudeUsageTracker to launch automatically at login.
-# This installs a LaunchAgent — no admin rights required.
-
 set -euo pipefail
 
 APP_NAME="ClaudeUsageTracker"
 BUNDLE_ID="com.fiskaly.claude-usage-tracker"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SOURCE="${SCRIPT_DIR}/${APP_NAME}.app"
+DEST_DIR="$HOME/Applications"
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
 LAUNCH_AGENT_PLIST="${LAUNCH_AGENT_DIR}/${BUNDLE_ID}.plist"
 
-# Find the app — check both /Applications and ~/Applications
-if [ -d "/Applications/${APP_NAME}.app" ]; then
-    APP_PATH="/Applications/${APP_NAME}.app"
-elif [ -d "$HOME/Applications/${APP_NAME}.app" ]; then
-    APP_PATH="$HOME/Applications/${APP_NAME}.app"
-else
-    echo ""
-    echo "  Please drag ${APP_NAME}.app to Applications first!"
-    echo ""
+echo ""
+echo "  Installing ${APP_NAME}..."
+echo ""
+
+if [ ! -d "$SOURCE" ]; then
+    echo "  Error: ${APP_NAME}.app not found next to this script."
+    echo "  Make sure you're running this from the mounted DMG."
     exit 1
 fi
 
+# 1. Copy app to ~/Applications
+mkdir -p "$DEST_DIR"
+pkill -f "${APP_NAME}" 2>/dev/null || true
+sleep 0.3
+rm -rf "${DEST_DIR}/${APP_NAME}.app"
+cp -R "$SOURCE" "${DEST_DIR}/"
+xattr -cr "${DEST_DIR}/${APP_NAME}.app" 2>/dev/null || true
+echo "  [1/3] Copied to ${DEST_DIR}/${APP_NAME}.app"
+
+# 2. Set up autostart (LaunchAgent)
 mkdir -p "${LAUNCH_AGENT_DIR}"
+cat > "${LAUNCH_AGENT_PLIST}" << PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${BUNDLE_ID}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${DEST_DIR}/${APP_NAME}.app/Contents/MacOS/${APP_NAME}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+PLISTEOF
 
-# Use plistlib for safe XML escaping (handles spaces and special chars in paths)
-python3 -c "
-import plistlib, sys
-plist = {
-    'Label': sys.argv[1],
-    'ProgramArguments': [sys.argv[2]],
-    'RunAtLoad': True,
-    'KeepAlive': False,
-}
-with open(sys.argv[3], 'wb') as f:
-    plistlib.dump(plist, f)
-" "${BUNDLE_ID}" "${APP_PATH}/Contents/MacOS/${APP_NAME}" "${LAUNCH_AGENT_PLIST}"
-
-# Activate the LaunchAgent immediately (no need to log out/in)
 launchctl unload "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
 launchctl load "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
+echo "  [2/3] Autostart configured (launches at login)"
 
-# Also open the app right now
-open "${APP_PATH}"
+# 3. Launch the app now
+open "${DEST_DIR}/${APP_NAME}.app"
+echo "  [3/3] App launched — check your menu bar!"
 
 echo ""
-echo "  Done! ${APP_NAME} is running and will auto-start at login."
-echo "  To remove autostart: rm ${LAUNCH_AGENT_PLIST}"
+echo "  Done! No admin rights were needed."
+echo ""
+echo "  To uninstall later:"
+echo "    rm -rf ~/Applications/${APP_NAME}.app"
+echo "    launchctl unload ${LAUNCH_AGENT_PLIST}"
+echo "    rm ${LAUNCH_AGENT_PLIST}"
 echo ""
 INSTALL
 
-chmod +x "${DMG_STAGING}/Install Autostart.command"
+chmod +x "${DMG_STAGING}/Install (no admin).command"
 
 # Create README
 cat > "${DMG_STAGING}/README.txt" << 'README'
 ClaudeUsageTracker — Menu Bar Usage Monitor
 ============================================
 
-Setup (no admin rights needed):
+Install (no admin rights needed):
 
-1. Drag ClaudeUsageTracker.app to the Applications folder
-2. Double-click "Install Autostart" to set up auto-launch and start the app
-3. Look for the usage indicator in your menu bar
+1. Open the DMG
+2. Open Terminal (Spotlight: Cmd+Space → type "Terminal")
+3. Paste this command and press Enter:
 
-First launch: macOS may ask "Are you sure you want to open this?"
- → Click "Open" to confirm.
+   bash "/Volumes/ClaudeUsageTracker/Install (no admin).command"
+
+4. The app installs to ~/Applications, sets up autostart,
+   and launches automatically. Look for the usage indicator
+   in your menu bar.
 
 Requirements:
 - macOS 13+ (Apple Silicon)
@@ -151,9 +172,9 @@ to fetch usage data from the Anthropic API every 2-5 minutes.
 No tokens are consumed — it only reads usage metadata.
 
 To uninstall:
-- Delete /Applications/ClaudeUsageTracker.app
+- Delete ~/Applications/ClaudeUsageTracker.app
 - Run: launchctl unload ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
-- Delete ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
+- Run: rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
 README
 
 # Create DMG
