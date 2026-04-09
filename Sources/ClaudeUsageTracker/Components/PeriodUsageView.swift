@@ -116,16 +116,18 @@ struct PeriodUsageView: View {
                 }
             }
 
-            // Metrics row — all 4 token types
-            HStack(spacing: 8) {
-                MetricPill(label: "INPUT", value: UsageViewModel.formatTokens(inputTokens))
-                MetricPill(label: "OUTPUT", value: UsageViewModel.formatTokens(outputTokens))
-                MetricPill(label: "CACHE W", value: UsageViewModel.formatTokens(cacheWriteTokens))
-                MetricPill(label: "CACHE R", value: UsageViewModel.formatTokens(cacheReadTokens))
+            // Metrics row — only shown when there's token data
+            if totalTokens > 0 {
+                HStack(spacing: 8) {
+                    MetricPill(label: "INPUT", value: UsageViewModel.formatTokens(inputTokens))
+                    MetricPill(label: "OUTPUT", value: UsageViewModel.formatTokens(outputTokens))
+                    MetricPill(label: "CACHE W", value: UsageViewModel.formatTokens(cacheWriteTokens))
+                    MetricPill(label: "CACHE R", value: UsageViewModel.formatTokens(cacheReadTokens))
+                }
             }
 
             // Model breakdown
-            if modelBreakdown.count > 1 {
+            if totalTokens > 0 && modelBreakdown.count > 1 {
                 VStack(spacing: 4) {
                     ForEach(modelBreakdown) { model in
                         HStack(spacing: 6) {

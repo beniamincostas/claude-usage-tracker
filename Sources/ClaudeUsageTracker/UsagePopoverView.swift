@@ -4,6 +4,7 @@ struct UsagePopoverView: View {
     @ObservedObject var viewModel: UsageViewModel
     var onLogout: (() -> Void)?
     @State private var allTimeExpanded = false
+    @AppStorage("showTokenDetails") private var showTokenDetails = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,18 +15,18 @@ struct UsagePopoverView: View {
 
                         // 5-Hour Window (shortest timeframe first)
                         if viewModel.usage != nil || viewModel.apiUsage != nil {
-                            let t5h = viewModel.tokens(for: .fiveHour)
+                            let t5h = showTokenDetails ? viewModel.tokens(for: .fiveHour) : (0, 0, 0, 0)
                             PeriodUsageView(
                                 title: "5-HOUR WINDOW",
                                 icon: "clock",
                                 percentage: viewModel.fiveHourPercentage,
                                 countdown: viewModel.fiveHourCountdown,
-                                inputTokens: t5h.input,
-                                outputTokens: t5h.output,
-                                cacheWriteTokens: t5h.cacheWrite,
-                                cacheReadTokens: t5h.cacheRead,
-                                modelBreakdown: viewModel.modelBreakdown(for: .fiveHour),
-                                extraTokens: viewModel.fiveHourExtraTokens,
+                                inputTokens: t5h.0,
+                                outputTokens: t5h.1,
+                                cacheWriteTokens: t5h.2,
+                                cacheReadTokens: t5h.3,
+                                modelBreakdown: showTokenDetails ? viewModel.modelBreakdown(for: .fiveHour) : [],
+                                extraTokens: showTokenDetails ? viewModel.fiveHourExtraTokens : nil,
                                 timeToLimit: viewModel.fiveHourTimeToLimit,
                                 isStale: !viewModel.isAPIDataFresh
                             )
@@ -33,36 +34,36 @@ struct UsagePopoverView: View {
 
                         // 7-Day Usage
                         if viewModel.usage != nil || viewModel.apiUsage != nil {
-                            let t7d = viewModel.tokens(for: .week)
+                            let t7d = showTokenDetails ? viewModel.tokens(for: .week) : (0, 0, 0, 0)
                             PeriodUsageView(
                                 title: "7-DAY USAGE",
                                 icon: "calendar.badge.clock",
                                 percentage: viewModel.weekPercentage,
                                 countdown: viewModel.weekCountdown,
-                                inputTokens: t7d.input,
-                                outputTokens: t7d.output,
-                                cacheWriteTokens: t7d.cacheWrite,
-                                cacheReadTokens: t7d.cacheRead,
-                                modelBreakdown: viewModel.modelBreakdown(for: .week),
-                                extraTokens: viewModel.weekExtraTokens,
+                                inputTokens: t7d.0,
+                                outputTokens: t7d.1,
+                                cacheWriteTokens: t7d.2,
+                                cacheReadTokens: t7d.3,
+                                modelBreakdown: showTokenDetails ? viewModel.modelBreakdown(for: .week) : [],
+                                extraTokens: showTokenDetails ? viewModel.weekExtraTokens : nil,
                                 timeToLimit: viewModel.weekTimeToLimit,
                                 subBuckets: viewModel.weekSubBuckets,
                                 isStale: !viewModel.isAPIDataFresh
                             )
                         }
 
-                        // Today + Monthly side by side
-                        if viewModel.usage != nil {
+                        // Today + Monthly (only with token details)
+                        if showTokenDetails && viewModel.usage != nil {
                             todayAndMonthly
                         }
 
-                        // Extra Usage (API-sourced dollar credits)
+                        // Extra Usage (API-sourced dollar credits — always shown)
                         if viewModel.extraUsageEnabled && viewModel.extraUsageCredits > 0 {
                             extraUsageCard
                         }
 
-                        // All-Time Historical (from stats-cache.json — Opus + Sonnet + all models)
-                        if !viewModel.historicalModels.isEmpty {
+                        // All-Time Historical (only with token details)
+                        if showTokenDetails && !viewModel.historicalModels.isEmpty {
                             allTimeSection
                         }
 
@@ -100,13 +101,27 @@ struct UsagePopoverView: View {
                     .foregroundStyle(Theme.textPrimary)
             }
 
-            // Second line: billing month + status
+            // Second line: billing month + details toggle + status
             HStack {
                 if let month = viewModel.usage?.billingMonth {
                     Text(month)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
                 }
+
+                Button(action: { showTokenDetails.toggle() }) {
+                    Text(showTokenDetails ? "Details ON" : "Details")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(showTokenDetails ? Theme.accent : Theme.textTertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            showTokenDetails ? Theme.accent.opacity(0.15) : Theme.bgCardHover,
+                            in: RoundedRectangle(cornerRadius: 4)
+                        )
+                }
+                .buttonStyle(.plain)
+
                 Spacer()
                 HStack(spacing: 3) {
                     Circle()
