@@ -3,6 +3,10 @@ import Foundation
 enum ModelUtils {
     static func displayName(for modelId: String) -> String {
         var name = modelId
+        // Strip context window suffix like [1m]
+        if let bracket = name.firstIndex(of: "[") {
+            name = String(name[name.startIndex..<bracket])
+        }
         if name.hasPrefix("claude-") { name = String(name.dropFirst(7)) }
         // Remove date suffixes like -20241022
         if let range = name.range(of: #"-\d{8,}$"#, options: .regularExpression) {

@@ -47,12 +47,13 @@ iso_to_epoch() {
   [ -z "$val" ] && echo "" && return
   # Already a number? Pass through
   if [[ "$val" =~ ^[0-9]+$ ]]; then echo "$val"; return; fi
-  # Strip fractional seconds (.000) before parsing
+  # Strip fractional seconds and timezone offset for macOS date parsing
   local clean="${val%%.*}"
-  # macOS date: try with and without trailing Z
-  date -jf "%Y-%m-%dT%H:%M:%S" "$clean" +%s 2>/dev/null && return
-  date -jf "%Y-%m-%dT%H:%M:%SZ" "$val" +%s 2>/dev/null && return
-  # GNU date fallback
+  clean="${clean%%+*}"  # Strip +HH:MM timezone offset
+  clean="${clean%%Z*}"  # Strip trailing Z
+  # macOS date: parse as UTC (-u flag)
+  date -u -jf "%Y-%m-%dT%H:%M:%S" "$clean" +%s 2>/dev/null && return
+  # GNU date fallback (handles full ISO 8601 natively)
   date -d "$val" +%s 2>/dev/null && return
   echo ""
 }
@@ -111,7 +112,7 @@ while ! mkdir "$USAGE_LOCK" 2>/dev/null; do
         mkdir "$USAGE_LOCK" 2>/dev/null && break
       fi
     fi
-    break  # Give up rather than block the statusline
+    exit 0  # Skip this update rather than risk data corruption
   fi
   sleep 0.1
 done
@@ -165,15 +166,14 @@ CURRENT_DATE=$(date +%Y-%m-%d)
   (.sessions[$sid].model // "")
 ')
 
-# If the model changed mid-session, treat the previous session baseline as zero so the full
-# cumulative token count is re-attributed to the new model. This avoids orphaned tokens that
-# were never credited to any per-model counter (the old model's entries already captured their
-# share up to the point of the last statusline call before the switch).
+# If the model changed mid-session, set baseline to current totals so DELTA=0.
+# Only genuinely new tokens after the switch will flow into the new model.
+# The old model's counters remain correct (they captured everything up to the switch).
 if [ -n "$SESS_LOG_MODEL" ] && [ "$SESS_LOG_MODEL" != "$MODEL_ID" ]; then
-  SESS_PREV_IN=0
-  SESS_PREV_OUT=0
-  SESS_PREV_CACHE_WRITE=0
-  SESS_PREV_CACHE_READ=0
+  SESS_PREV_IN=$TOTAL_IN
+  SESS_PREV_OUT=$TOTAL_OUT
+  SESS_PREV_CACHE_WRITE=$CACHE_WRITE
+  SESS_PREV_CACHE_READ=$CACHE_READ
 fi
 
 # --- Reset month counters if billing month rolled over ---
@@ -195,8 +195,12 @@ if [ "$STORED_MONTH" != "$CURRENT_MONTH" ]; then
   SESS_PREV_OUT=0
   SESS_PREV_CACHE_WRITE=0
   SESS_PREV_CACHE_READ=0
+  # Reset stored resets_at so period resets don't double-fire
+  STORED_WEEK_RESETS="0"
+  STORED_DAY_RESETS="0"
   # Zero all per-model counters in LOG (keep sessions object intact)
   LOG=$(echo "$LOG" | jq '
+    .week_resets_at = 0 | .day_resets_at = 0 |
     if .models then
       .models |= map_values(
         .month_input_tokens          = 0 |
@@ -232,7 +236,7 @@ fi
 # Only zeros week counters. Does NOT touch month counters or sessions.
 EFFECTIVE_WEEK_RESETS="${WEEK_RESETS:-$STORED_WEEK_RESETS}"
 if [ -n "$EFFECTIVE_WEEK_RESETS" ] && [ "$EFFECTIVE_WEEK_RESETS" != "0" ]; then
-  if [ -n "$WEEK_RESETS" ] && [ "$WEEK_RESETS" != "$STORED_WEEK_RESETS" ] && [ "$STORED_WEEK_RESETS" != "0" ]; then
+  if [ -n "$WEEK_RESETS" ] && [ "$WEEK_RESETS" != "$STORED_WEEK_RESETS" ] && [ "$STORED_WEEK_RESETS" != "0" ] && [ "$NOW_EPOCH" -ge "$STORED_WEEK_RESETS" ]; then
     WEEK_IN=0
     WEEK_OUT=0
     # Zero per-model weekly counts only; leave month/day/sessions untouched
@@ -244,7 +248,7 @@ fi
 # Only zeros day counters. Does NOT touch cal_day, week, month counters or sessions.
 EFFECTIVE_DAY_RESETS="${DAY_RESETS:-$STORED_DAY_RESETS}"
 if [ -n "$EFFECTIVE_DAY_RESETS" ] && [ "$EFFECTIVE_DAY_RESETS" != "0" ]; then
-  if [ -n "$DAY_RESETS" ] && [ "$DAY_RESETS" != "$STORED_DAY_RESETS" ] && [ "$STORED_DAY_RESETS" != "0" ]; then
+  if [ -n "$DAY_RESETS" ] && [ "$DAY_RESETS" != "$STORED_DAY_RESETS" ] && [ "$STORED_DAY_RESETS" != "0" ] && [ "$NOW_EPOCH" -ge "$STORED_DAY_RESETS" ]; then
     DAY_IN=0
     DAY_OUT=0
     # Zero per-model 5h counts only; leave cal_day/week/month/sessions untouched
@@ -410,11 +414,13 @@ jq -n \
       (($existing.sessions // {}) + {
         ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr}
       })
-      # Prune sessions with zero input AND zero output (dead/cleared sessions),
-      # then keep only the most recent 50 by entry order to cap unbounded growth.
+      # Prune sessions: remove zero-token entries, keep last 50, but always preserve current session.
       | to_entries
       | map(select((.value.input_tokens // 0) > 0 or (.value.output_tokens // 0) > 0))
-      | if length > 50 then .[(length - 50):] else . end
+      | (map(select(.key == $sid))) as $current
+      | map(select(.key != $sid))
+      | if length > 49 then .[(length - 49):] else . end
+      | . + $current
       | from_entries
     )
   }' > "${USAGE_FILE}.tmp" && mv "${USAGE_FILE}.tmp" "$USAGE_FILE"
