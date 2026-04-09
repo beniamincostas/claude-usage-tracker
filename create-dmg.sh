@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="ClaudeUsageTracker"
 BUNDLE_ID="com.fiskaly.claude-usage-tracker"
-VERSION="2.0.0-beta"
+VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/.build/release"
 APP_DIR="${SCRIPT_DIR}/${APP_NAME}.app"
@@ -265,7 +265,7 @@ chmod +x "${DMG_STAGING}/install.sh"
 
 # Create README — named so it's obvious in the DMG
 cat > "${DMG_STAGING}/README — NO ADMIN INSTALL.txt" << 'README'
-ClaudeUsageTracker v2.0.0-beta — Menu Bar Usage Monitor
+ClaudeUsageTracker v2.0.0 — Menu Bar Usage Monitor
 ========================================================
 
 INSTALL (no admin rights needed):
