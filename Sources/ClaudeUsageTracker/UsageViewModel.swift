@@ -207,7 +207,8 @@ final class UsageViewModel: ObservableObject {
     /// Wake up API polling — called when Claude activity is detected.
     /// Updates lastActivityTime so the loop uses the faster active interval.
     func wakeAPIPolling() {
-        guard Self.hasConsent else { return }
+        // #2: Allow both OAuth and Keychain users to wake polling
+        guard Self.hasConsent || UserDefaults.standard.string(forKey: "authMethod") == "oauth" else { return }
         lastActivityTime = .now
         // Restart loop if it was cancelled (shouldn't happen, but safety net)
         if apiPollingTask == nil {
@@ -531,13 +532,21 @@ final class UsageViewModel: ObservableObject {
         return formatCountdown(diff)
     }
 
+    // #21: Cached formatters (ISO8601DateFormatter is expensive to construct)
+    private static let iso8601WithFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let iso8601NoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     private func formatISO8601Countdown(_ iso: String) -> String? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let target = formatter.date(from: iso) else {
-            // Try without fractional seconds
-            formatter.formatOptions = [.withInternetDateTime]
-            guard let target = formatter.date(from: iso) else { return nil }
+        guard let target = Self.iso8601WithFrac.date(from: iso) else {
+            guard let target = Self.iso8601NoFrac.date(from: iso) else { return nil }
             let diff = target.timeIntervalSince(.now)
             if diff <= 0 { return "reset complete" }
             return formatCountdown(diff)
@@ -791,18 +800,16 @@ final class UsageViewModel: ObservableObject {
     }
 
     private static var notificationAuthRequested = false
-    private static var notificationAuthGranted = false
 
     private func sendNotification(title: String, body: String) {
         let center = UNUserNotificationCenter.current()
 
         if !Self.notificationAuthRequested {
             Self.notificationAuthRequested = true
-            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                Task { @MainActor in Self.notificationAuthGranted = granted }
-            }
+            center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
 
+        // System silently drops notifications if not authorized — acceptable behavior
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -811,7 +818,7 @@ final class UsageViewModel: ObservableObject {
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
-            trigger: nil // Deliver immediately
+            trigger: nil
         )
         center.add(request)
     }

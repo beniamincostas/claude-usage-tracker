@@ -449,11 +449,11 @@ colorize() {
 }
 
 # --- helper: print one data row ---
-# Arguments: label bar_raw bar_color pct_raw in_tok ignored out_tok ignored total [trail]
+# Arguments: label bar_raw bar_color pct_raw in_tok out_tok total [trail]
 print_row() {
   local label="$1" bar_raw="$2" bar_color="$3" pct_raw="$4"
-  local in_tok="$5" out_tok="$7" total="$9"
-  local trail="${10:-}"
+  local in_tok="$5" out_tok="$6" total="$7"
+  local trail="${8:-}"
 
   local label_f; printf -v label_f "%-9s" "$label"
 
@@ -484,10 +484,10 @@ print_row() {
 
 # --- helper: print one model breakdown row ---
 # The model name spans the full LEFT_AREA (25 chars) so │ stays aligned.
-# Arguments: prefix short_name in_tok ignored out_tok ignored total
+# Arguments: prefix short_name in_tok out_tok total
 print_model_row() {
   local prefix="$1" short_name="$2"
-  local in_tok="$3" out_tok="$5" total="$7"
+  local in_tok="$3" out_tok="$4" total="$5"
 
   local raw_label="${prefix} ${short_name}"
   local raw_len=${#raw_label}
@@ -581,23 +581,18 @@ model_breakdown_lines() {
     fi
 
     print_model_row "$prefix" "$short_name" \
-      "$min_fmt" "" \
-      "$mout_fmt" "" \
-      "$mtotal_fmt"
+      "$min_fmt" "$mout_fmt" "$mtotal_fmt"
   done
 }
 
 # -----------------------------------------------------------------------
 # Cost calculations (session uses current model pricing)
-# Cache write tokens are billed at 1.25× input price; cache read at 0.1× input price.
 # -----------------------------------------------------------------------
-# Format helpers
+# Format helpers — only formats needed for displayed rows (5h, 7d)
 # -----------------------------------------------------------------------
-TOTAL_IN_FMT=$(fmt_tokens      "$TOTAL_IN");      TOTAL_OUT_FMT=$(fmt_tokens      "$TOTAL_OUT")
-DAY_IN_FMT=$(fmt_tokens        "$DAY_IN");        DAY_OUT_FMT=$(fmt_tokens        "$DAY_OUT");        DAY_TOTAL_FMT=$(fmt_tokens        "$((DAY_IN + DAY_OUT))")
-CAL_DAY_IN_FMT=$(fmt_tokens    "$CAL_DAY_IN");    CAL_DAY_OUT_FMT=$(fmt_tokens    "$CAL_DAY_OUT");    CAL_DAY_TOTAL_FMT=$(fmt_tokens    "$((CAL_DAY_IN + CAL_DAY_OUT))")
-WEEK_IN_FMT=$(fmt_tokens       "$WEEK_IN");       WEEK_OUT_FMT=$(fmt_tokens       "$WEEK_OUT");       WEEK_TOTAL_FMT=$(fmt_tokens       "$((WEEK_IN + WEEK_OUT))")
-MONTH_IN_FMT=$(fmt_tokens      "$MONTH_IN");      MONTH_OUT_FMT=$(fmt_tokens      "$MONTH_OUT");      MONTH_TOTAL_FMT=$(fmt_tokens      "$((MONTH_IN + MONTH_OUT))")
+TOTAL_IN_FMT=$(fmt_tokens "$TOTAL_IN");   TOTAL_OUT_FMT=$(fmt_tokens "$TOTAL_OUT")
+DAY_IN_FMT=$(fmt_tokens   "$DAY_IN");    DAY_OUT_FMT=$(fmt_tokens   "$DAY_OUT");    DAY_TOTAL_FMT=$(fmt_tokens "$((DAY_IN + DAY_OUT))")
+WEEK_IN_FMT=$(fmt_tokens  "$WEEK_IN");   WEEK_OUT_FMT=$(fmt_tokens  "$WEEK_OUT");   WEEK_TOTAL_FMT=$(fmt_tokens "$((WEEK_IN + WEEK_OUT))")
 
 # -----------------------------------------------------------------------
 # Context bar
@@ -671,9 +666,7 @@ if [ -n "$DAY_PCT_RAW" ]; then
   fi
 
   print_row "5h" "$DAY_BAR" "$DAY_COLOR" "$DAY_PCT" \
-    "$DAY_IN_FMT"  "" \
-    "$DAY_OUT_FMT" "" \
-    "$DAY_TOTAL_FMT" "$DAY_RESET_STR"
+    "$DAY_IN_FMT" "$DAY_OUT_FMT" "$DAY_TOTAL_FMT" "$DAY_RESET_STR"
 fi
 
 # --- 4. Weekly rate limit (only when data is available) ---
@@ -702,7 +695,5 @@ if [ -n "$WEEK_PCT_RAW" ]; then
   fi
 
   print_row "7d" "$WEEK_BAR" "$WEEK_COLOR" "$WEEK_PCT" \
-    "$WEEK_IN_FMT"  "" \
-    "$WEEK_OUT_FMT" "" \
-    "$WEEK_TOTAL_FMT" "$WEEK_RESET_STR"
+    "$WEEK_IN_FMT" "$WEEK_OUT_FMT" "$WEEK_TOTAL_FMT" "$WEEK_RESET_STR"
 fi

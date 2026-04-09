@@ -5,6 +5,7 @@ struct UsagePopoverView: View {
     var onLogout: (() -> Void)?
     @State private var allTimeExpanded = false
     @AppStorage("showTokenDetails") private var showTokenDetails = false
+    @AppStorage("authMethod") private var authMethod: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -400,7 +401,7 @@ struct UsagePopoverView: View {
     // MARK: - Footer
 
     private var authMethodLabel: String {
-        switch UserDefaults.standard.string(forKey: "authMethod") {
+        switch authMethod {
         case "oauth": return "OAuth"
         case "keychain": return "Keychain"
         default: return ""
