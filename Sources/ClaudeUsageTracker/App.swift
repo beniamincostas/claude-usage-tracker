@@ -72,6 +72,7 @@ struct ClaudeUsageTrackerApp: App {
 
     private func logout() {
         oauthManager.logout()
+        viewModel.stopAndReset()  // #2: cancel polling, clear API client
         UserDefaults.standard.removeObject(forKey: "keychainAccessApproved")
         UserDefaults.standard.removeObject(forKey: Self.authMethodKey)
         isAuthenticated = false

@@ -72,7 +72,10 @@ actor UpdateChecker {
         alert.addButton(withTitle: "Later")
 
         if alert.runModal() == .alertFirstButtonReturn {
-            if let downloadURL = URL(string: url) {
+            // #5: Validate URL scheme and domain before opening
+            if let downloadURL = URL(string: url),
+               downloadURL.scheme == "https",
+               downloadURL.host?.hasSuffix("github.com") == true {
                 NSWorkspace.shared.open(downloadURL)
             }
         }

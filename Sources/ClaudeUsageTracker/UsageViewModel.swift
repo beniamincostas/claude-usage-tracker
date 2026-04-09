@@ -66,8 +66,24 @@ final class UsageViewModel: ObservableObject {
 
     /// Connect with OAuthManager — replaces Keychain-based token reading.
     func connectOAuth(_ manager: OAuthManager) {
+        stopAndReset()  // #7: cancel old polling before switching token source
         apiClient = UsageAPIClient(oauthManager: manager)
         start()
+    }
+
+    /// Stop all monitoring and reset API client — used on logout/switch.
+    func stopAndReset() {
+        apiPollingTask?.cancel()
+        apiPollingTask = nil
+        countdownTimer?.cancel()
+        countdownTimer = nil
+        usageFileWatcher?.stop()
+        usageFileWatcher = nil
+        statsFileWatcher?.stop()
+        statsFileWatcher = nil
+        apiClient = UsageAPIClient()
+        apiUsage = nil
+        apiDataSource = .fileOnly
     }
 
     /// Begin all monitoring — call only after user consent/login is confirmed.

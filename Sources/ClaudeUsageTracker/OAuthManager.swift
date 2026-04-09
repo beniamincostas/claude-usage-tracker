@@ -1,6 +1,7 @@
 import Foundation
 import CommonCrypto
 import AppKit
+import Security
 
 /// Manages OAuth 2.0 PKCE flow with Anthropic's authorization endpoint.
 @MainActor
@@ -23,11 +24,10 @@ final class OAuthManager: ObservableObject {
     private var pkceVerifier: String?
     private var pkceState: String?
     private var refreshTask: Task<Void, Never>?
+    private var pendingRefresh: Task<TokenResponse, Error>?  // #3: refresh gate
 
     init() {
-        // Only mark as authenticated if OAuth was previously selected.
-        // Don't touch Keychain here — defer to first getAccessToken() call
-        // to avoid macOS Keychain ACL prompts on launch.
+        // #9: Only set isAuthenticated as UI hint — actual token verified on first getAccessToken()
         if UserDefaults.standard.string(forKey: "authMethod") == "oauth" {
             isAuthenticated = true
         }
@@ -98,26 +98,44 @@ final class OAuthManager: ObservableObject {
             pkceState = nil
             startTokenRefreshLoop()
         } catch {
-            loginError = "Login failed: \(error.localizedDescription)"
+            // #10: Truncate error to avoid leaking server response details
+            let msg = error.localizedDescription
+            loginError = "Login failed: \(String(msg.prefix(200)))"
             isLoggingIn = false
         }
     }
 
+    // #3: Refresh gate — prevents concurrent refresh calls from racing
     func getAccessToken() async -> String? {
-        guard let token = loadAccessToken() else { return nil }
+        guard let token = loadAccessToken() else {
+            // #4: No token in Keychain — bounce back to auth screen
+            if isAuthenticated { logout() }
+            return nil
+        }
 
         if let expiresAt = loadExpiresAt(), Date.now.timeIntervalSince1970 > (expiresAt - 300) {
-            if let refreshToken = loadRefreshToken() {
-                do {
-                    let tokens = try await refreshAccessToken(refreshToken: refreshToken)
-                    saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
-                    return tokens.accessToken
-                } catch {
-                    await MainActor.run { logout() }
-                    return nil
+            guard let rt = loadRefreshToken(), !rt.isEmpty else {
+                logout()
+                return nil
+            }
+
+            // Use pending refresh if one is already in flight
+            if pendingRefresh == nil {
+                pendingRefresh = Task {
+                    try await refreshAccessToken(refreshToken: rt)
                 }
             }
-            return nil
+
+            do {
+                let tokens = try await pendingRefresh!.value
+                pendingRefresh = nil
+                saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
+                return tokens.accessToken
+            } catch {
+                pendingRefresh = nil
+                logout()
+                return nil
+            }
         }
 
         return token
@@ -130,6 +148,8 @@ final class OAuthManager: ObservableObject {
         isAuthenticated = false
         refreshTask?.cancel()
         refreshTask = nil
+        pendingRefresh?.cancel()
+        pendingRefresh = nil
     }
 
     // MARK: - Token Exchange
@@ -166,9 +186,9 @@ final class OAuthManager: ObservableObject {
 
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let respBody = String(data: data, encoding: .utf8) ?? ""
+            // #10: Don't include raw server response in error message
             throw NSError(domain: "OAuthError", code: status, userInfo: [
-                NSLocalizedDescriptionKey: "Token request failed (HTTP \(status)): \(respBody)"
+                NSLocalizedDescriptionKey: "Token request failed (HTTP \(status))"
             ])
         }
 
@@ -179,10 +199,12 @@ final class OAuthManager: ObservableObject {
             ])
         }
 
-        let refreshToken = json["refresh_token"] as? String ?? ""
+        // #6: Preserve existing refresh token if server omits it
+        let newRefreshToken = (json["refresh_token"] as? String).flatMap({ $0.isEmpty ? nil : $0 })
+            ?? loadRefreshToken() ?? ""
         let expiresIn = json["expires_in"] as? Double ?? 3600
 
-        return TokenResponse(accessToken: accessToken, refreshToken: refreshToken,
+        return TokenResponse(accessToken: accessToken, refreshToken: newRefreshToken,
                            expiresAt: Date.now.timeIntervalSince1970 + expiresIn)
     }
 
@@ -194,8 +216,8 @@ final class OAuthManager: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1800))
                 guard !Task.isCancelled else { break }
-                if let refreshToken = loadRefreshToken() {
-                    if let tokens = try? await refreshAccessToken(refreshToken: refreshToken) {
+                if let rt = loadRefreshToken(), !rt.isEmpty {
+                    if let tokens = try? await refreshAccessToken(refreshToken: rt) {
                         saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
                     }
                 }
@@ -224,7 +246,7 @@ final class OAuthManager: ObservableObject {
         return Data(bytes).base64URLEncoded()
     }
 
-    // MARK: - Keychain
+    // MARK: - Keychain (with ACL)
 
     private func saveTokens(accessToken: String, refreshToken: String, expiresAt: Double) {
         saveToKeychain(key: Self.accessTokenKey, value: accessToken)
@@ -236,6 +258,7 @@ final class OAuthManager: ObservableObject {
     private func loadRefreshToken() -> String? { loadFromKeychain(key: Self.refreshTokenKey) }
     private func loadExpiresAt() -> Double? { loadFromKeychain(key: Self.expiresAtKey).flatMap(Double.init) }
 
+    // #1: Add kSecAttrAccessibleWhenUnlockedThisDeviceOnly to prevent cross-device token leakage
     private func saveToKeychain(key: String, value: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -245,6 +268,7 @@ final class OAuthManager: ObservableObject {
         SecItemDelete(query as CFDictionary)
         var add = query
         add[kSecValueData as String] = Data(value.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         SecItemAdd(add as CFDictionary, nil)
     }
 
