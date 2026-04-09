@@ -51,7 +51,9 @@ final class UsageViewModel: ObservableObject {
         loadStatsCache()
         setupFileWatchers()
         setupCountdownTimer()
-        startAPIPolling()
+        if UserDefaults.standard.bool(forKey: "keychainAccessApproved") {
+            startAPIPolling()
+        }
     }
 
     // MARK: - Rate Limit Percentage
