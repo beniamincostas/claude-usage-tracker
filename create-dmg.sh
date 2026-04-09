@@ -155,6 +155,25 @@ INSTALL
 
 chmod +x "${DMG_STAGING}/Install (no admin).command"
 
+# Create .terminal file — double-click opens Terminal and runs the install script
+# This is a document file, not an executable, so Gatekeeper does not block it
+cat > "${DMG_STAGING}/Install.terminal" << 'TERMFILE'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CommandString</key>
+    <string>bash "/Volumes/ClaudeUsageTracker/Install (no admin).command"</string>
+    <key>ProfileCurrentByDefault</key>
+    <true/>
+    <key>name</key>
+    <string>Install ClaudeUsageTracker</string>
+    <key>RunCommandAsShell</key>
+    <false/>
+</dict>
+</plist>
+TERMFILE
+
 # Create README
 cat > "${DMG_STAGING}/README.txt" << 'README'
 ClaudeUsageTracker — Menu Bar Usage Monitor
@@ -163,14 +182,13 @@ ClaudeUsageTracker — Menu Bar Usage Monitor
 Install (no admin rights needed):
 
 1. Open the DMG
-2. Open Terminal (Spotlight: Cmd+Space → type "Terminal")
-3. Paste this command and press Enter:
+2. Double-click "Install.terminal"
+3. Terminal opens and installs automatically
+4. Look for the usage indicator in your menu bar
 
-   bash "/Volumes/ClaudeUsageTracker/Install (no admin).command"
-
-4. The app installs to ~/Applications, sets up autostart,
-   and launches automatically. Look for the usage indicator
-   in your menu bar.
+Alternative (if Install.terminal doesn't work):
+  Open Terminal and paste:
+  bash "/Volumes/ClaudeUsageTracker/Install (no admin).command"
 
 Requirements:
 - macOS 13+ (Apple Silicon)
@@ -234,8 +252,8 @@ tell application "Finder"
         set position of item "ClaudeUsageTracker.app" to {150, 190}
         set position of item "Applications" to {500, 190}
 
-        -- Row 2: Install script + README (below)
-        set position of item "Install (no admin).command" to {230, 380}
+        -- Row 2: Install (double-click) + README (below)
+        set position of item "Install.terminal" to {230, 380}
         set position of item "README.txt" to {430, 380}
 
         close
