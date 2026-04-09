@@ -666,7 +666,6 @@ if [ -n "$DAY_PCT_RAW" ]; then
     "$DAY_IN_FMT"  "" \
     "$DAY_OUT_FMT" "" \
     "$DAY_TOTAL_FMT" "$DAY_RESET_STR"
-  model_breakdown_lines "day"
 fi
 
 # --- 4. Calendar-day row (midnight-to-midnight, always shown once we have data) ---
@@ -697,7 +696,6 @@ if [ "$CAL_DAY_IN" -gt 0 ] || [ "$CAL_DAY_OUT" -gt 0 ]; then
     "$CAL_DAY_IN_FMT"  "" \
     "$CAL_DAY_OUT_FMT" "" \
     "$CAL_DAY_TOTAL_FMT" "$CAL_RESET_STR"
-  model_breakdown_lines "cal_day"
 fi
 
 # --- 5. Weekly rate limit (only when data is available) ---
@@ -729,7 +727,6 @@ if [ -n "$WEEK_PCT_RAW" ]; then
     "$WEEK_IN_FMT"  "" \
     "$WEEK_OUT_FMT" "" \
     "$WEEK_TOTAL_FMT" "$WEEK_RESET_STR"
-  model_breakdown_lines "week"
 fi
 
 # --- 6. Monthly usage (always shown once we have any data) ---
