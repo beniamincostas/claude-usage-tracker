@@ -184,10 +184,11 @@ echo "  [5/5] App launched — check your menu bar!"
 echo ""
 echo "  Done! No admin rights were needed."
 echo ""
-echo "  To uninstall later:"
-echo "    rm -rf ~/Applications/${APP_NAME}.app"
+echo "  To uninstall later (paste into Terminal):"
+echo "    pkill ${APP_NAME}"
 echo "    launchctl unload ${LAUNCH_AGENT_PLIST}"
 echo "    rm ${LAUNCH_AGENT_PLIST}"
+echo "    rm -rf ~/Applications/${APP_NAME}.app"
 echo ""
 INSTALL
 
@@ -217,10 +218,12 @@ The app reads your Claude Code OAuth token from Keychain
 to fetch usage data from the Anthropic API every 2-5 minutes.
 No tokens are consumed — it only reads usage metadata.
 
-To uninstall:
-- Delete ~/Applications/ClaudeUsageTracker.app
-- Run: launchctl unload ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
-- Run: rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
+To uninstall (paste into Terminal):
+
+  pkill ClaudeUsageTracker
+  launchctl unload ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
+  rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
+  rm -rf ~/Applications/ClaudeUsageTracker.app
 README
 
 # Generate background image (arrow pointing app → Applications)
