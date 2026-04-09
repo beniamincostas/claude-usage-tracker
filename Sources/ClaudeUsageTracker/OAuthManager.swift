@@ -83,13 +83,17 @@ final class OAuthManager: ObservableObject {
         }
 
         guard state == expectedState else {
-            loginError = "Security error: state mismatch. Please try again."
+            loginError = "State mismatch. Try again."
             isLoggingIn = false
+            debugLog("State mismatch: got=\(state) expected=\(expectedState)")
             return
         }
 
+        debugLog("Exchanging code (\(code.prefix(20))...) with state (\(state.prefix(20))...)")
+
         do {
             let tokens = try await exchangeCode(code: code, state: state, verifier: verifier)
+            debugLog("Token exchange succeeded, saving tokens")
             saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
             isAuthenticated = true
             isLoggingIn = false
@@ -98,10 +102,10 @@ final class OAuthManager: ObservableObject {
             pkceState = nil
             startTokenRefreshLoop()
         } catch {
-            // #10: Truncate error to avoid leaking server response details
             let msg = error.localizedDescription
-            loginError = "Login failed: \(String(msg.prefix(200)))"
-            isLoggingIn = false
+            debugLog("Token exchange FAILED: \(msg)")
+            loginError = "Login failed: \(String(msg.prefix(300)))"
+            // Stay on code input so user can retry
         }
     }
 
@@ -184,11 +188,13 @@ final class OAuthManager: ObservableObject {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let respBody = String(data: data, encoding: .utf8) ?? ""
+        debugLog("Token endpoint HTTP \(status): \(String(respBody.prefix(500)))")
+
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            // #10: Don't include raw server response in error message
             throw NSError(domain: "OAuthError", code: status, userInfo: [
-                NSLocalizedDescriptionKey: "Token request failed (HTTP \(status))"
+                NSLocalizedDescriptionKey: "Token request failed (HTTP \(status)): \(String(respBody.prefix(200)))"
             ])
         }
 
@@ -221,6 +227,24 @@ final class OAuthManager: ObservableObject {
                         saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Debug
+
+    private func debugLog(_ message: String) {
+        let log = "[\(Date())] \(message)\n"
+        let path = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/oauth-debug.log"
+        if let data = log.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path) {
+                if let handle = FileHandle(forWritingAtPath: path) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                }
+            } else {
+                FileManager.default.createFile(atPath: path, contents: data)
             }
         }
     }

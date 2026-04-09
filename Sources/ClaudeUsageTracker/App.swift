@@ -9,19 +9,18 @@ import AppKit
 struct ClaudeUsageTrackerApp: App {
     @StateObject private var oauthManager = OAuthManager()
     @StateObject private var viewModel = UsageViewModel()
-    @State private var isAuthenticated = false
+    @AppStorage("authMethod") private var authMethod: String = ""
+    @AppStorage("keychainAccessApproved") private var keychainApproved = false
 
     static let author = "Beniamin Costas"
     static let authorLinkedIn = "https://linkedin.com/in/beniamincostas"
 
-    private static let authMethodKey = "authMethod"
+    private var isAuthenticated: Bool {
+        (authMethod == "oauth" && oauthManager.isAuthenticated) ||
+        (authMethod == "keychain" && keychainApproved)
+    }
 
     init() {
-        let method = UserDefaults.standard.string(forKey: Self.authMethodKey)
-        if method == "keychain" && UsageViewModel.hasConsent {
-            _isAuthenticated = State(initialValue: true)
-        }
-        // Check for updates on launch
         Task { await UpdateChecker().checkForUpdate() }
     }
 
@@ -38,9 +37,13 @@ struct ClaudeUsageTrackerApp: App {
         .menuBarExtraStyle(.window)
         .onChange(of: oauthManager.isAuthenticated) { authenticated in
             if authenticated {
-                UserDefaults.standard.set("oauth", forKey: Self.authMethodKey)
+                authMethod = "oauth"
                 viewModel.connectOAuth(oauthManager)
-                isAuthenticated = true
+            }
+        }
+        .onChange(of: keychainApproved) { approved in
+            if approved && authMethod == "keychain" {
+                viewModel.start()
             }
         }
     }
@@ -63,18 +66,15 @@ struct ClaudeUsageTrackerApp: App {
         alert.addButton(withTitle: "Cancel")
 
         if alert.runModal() == .alertFirstButtonReturn {
-            UserDefaults.standard.set(true, forKey: "keychainAccessApproved")
-            UserDefaults.standard.set("keychain", forKey: Self.authMethodKey)
-            viewModel.start()
-            isAuthenticated = true
+            authMethod = "keychain"
+            keychainApproved = true
         }
     }
 
     private func logout() {
         oauthManager.logout()
-        viewModel.stopAndReset()  // #2: cancel polling, clear API client
-        UserDefaults.standard.removeObject(forKey: "keychainAccessApproved")
-        UserDefaults.standard.removeObject(forKey: Self.authMethodKey)
-        isAuthenticated = false
+        viewModel.stopAndReset()
+        keychainApproved = false
+        authMethod = ""
     }
 }

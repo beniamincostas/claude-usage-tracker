@@ -109,18 +109,13 @@ struct UsagePopoverView: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
 
-                Button(action: { showTokenDetails.toggle() }) {
-                    Text(showTokenDetails ? "Details ON" : "Details")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(showTokenDetails ? Theme.accent : Theme.textTertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            showTokenDetails ? Theme.accent.opacity(0.15) : Theme.bgCardHover,
-                            in: RoundedRectangle(cornerRadius: 4)
-                        )
+                Picker("", selection: $showTokenDetails) {
+                    Text("Simple").tag(false)
+                    Text("Detailed").tag(true)
                 }
-                .buttonStyle(.plain)
+                .pickerStyle(.segmented)
+                .frame(width: 120)
+                .scaleEffect(0.85)
 
                 Spacer()
                 HStack(spacing: 3) {
