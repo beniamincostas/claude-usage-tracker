@@ -18,12 +18,19 @@ cd "$SCRIPT_DIR"
 swift build -c release 2>&1
 
 echo ""
+echo "=== Generating app icon ==="
+ICON_DIR="${SCRIPT_DIR}/.build/icon"
+mkdir -p "${ICON_DIR}"
+python3 "${SCRIPT_DIR}/generate-icon.py" "${ICON_DIR}"
+
+echo ""
 echo "=== Creating .app bundle ==="
 rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 
 cp "${BUILD_DIR}/${APP_NAME}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+cp "${ICON_DIR}/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 
 cat > "${APP_DIR}/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,6 +48,8 @@ cat > "${APP_DIR}/Contents/Info.plist" << PLIST
     <string>${VERSION}</string>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -177,15 +186,77 @@ To uninstall:
 - Run: rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
 README
 
-# Create DMG
+# Generate background image (arrow pointing app → Applications)
+echo "   Generating background image..."
+python3 "${SCRIPT_DIR}/generate-dmg-bg.py" "${DMG_STAGING}/.bg.png"
+
+# Create a temporary read-write DMG (need r/w to apply Finder styling)
+DMG_RW="${DMG_DIR}/${APP_NAME}-rw.dmg"
 hdiutil create \
     -volname "${APP_NAME}" \
     -srcfolder "${DMG_STAGING}" \
     -ov \
-    -format UDZO \
-    "${DMG_FILE}"
+    -format UDRW \
+    -size 10m \
+    "${DMG_RW}"
 
-# Clean up staging
+# Detach any stale mounts of this volume name
+hdiutil detach "/Volumes/${APP_NAME}" 2>/dev/null || true
+
+# Mount the read-write DMG
+DEVICE=$(hdiutil attach "${DMG_RW}" -readwrite -noverify -noautoopen | awk '/Apple_APFS|Apple_HFS/{print $1; exit}')
+MOUNT_POINT="/Volumes/${APP_NAME}"
+echo "   Mounted at: ${MOUNT_POINT}"
+
+# Move background into hidden .background folder (Finder convention)
+mkdir -p "${MOUNT_POINT}/.background"
+mv "${MOUNT_POINT}/.bg.png" "${MOUNT_POINT}/.background/bg.png"
+
+# Apply Finder window styling via AppleScript
+echo "   Styling DMG window..."
+osascript << 'APPLESCRIPT'
+tell application "Finder"
+    tell disk "ClaudeUsageTracker"
+        open
+        delay 1
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set bounds of container window to {100, 100, 760, 580}
+
+        set theViewOptions to icon view options of container window
+        set arrangement of theViewOptions to not arranged
+        set icon size of theViewOptions to 80
+        set text size of theViewOptions to 12
+        set background picture of theViewOptions to file ".background:bg.png"
+
+        -- Row 1: App (left) → Applications (right)
+        set position of item "ClaudeUsageTracker.app" to {150, 190}
+        set position of item "Applications" to {500, 190}
+
+        -- Row 2: Install script + README (below)
+        set position of item "Install (no admin).command" to {230, 380}
+        set position of item "README.txt" to {430, 380}
+
+        close
+        open
+        delay 1
+        close
+    end tell
+end tell
+APPLESCRIPT
+
+# Ensure .DS_Store is flushed
+sync
+
+# Detach
+hdiutil detach "${MOUNT_POINT}" -quiet 2>/dev/null || hdiutil detach "${DEVICE}" -force
+
+# Convert to compressed read-only DMG
+hdiutil convert "${DMG_RW}" -format UDZO -o "${DMG_FILE}"
+
+# Clean up
+rm -f "${DMG_RW}"
 rm -rf "${DMG_STAGING}"
 
 echo ""
