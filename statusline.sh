@@ -69,6 +69,8 @@ if [ -z "$MODEL" ] || [ "$MODEL" = "null" ]; then
     -e 's/-\([0-9][0-9]*\)$/ \1/' | \
     awk '{for(i=1;i<=NF;i++){$i=toupper(substr($i,1,1))substr($i,2)};print}')
 fi
+# Strip context window suffix like "(1M context)" or "[1m]"
+MODEL=$(echo "$MODEL" | sed -e 's/ *([^)]*context)//i' -e 's/\[.*\]//')
 
 CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; BLUE='\033[34m'; MAGENTA='\033[35m'; RESET='\033[0m'
 
@@ -704,4 +706,3 @@ if [ -n "$WEEK_PCT_RAW" ]; then
     "$WEEK_OUT_FMT" "" \
     "$WEEK_TOTAL_FMT" "$WEEK_RESET_STR"
 fi
-
