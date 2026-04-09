@@ -242,8 +242,8 @@ chmod +x "${DMG_STAGING}/install.sh"
 
 # Create README — named so it's obvious in the DMG
 cat > "${DMG_STAGING}/README — NO ADMIN INSTALL.txt" << 'README'
-ClaudeUsageTracker — Menu Bar Usage Monitor
-============================================
+ClaudeUsageTracker v1.3.0 — Menu Bar Usage Monitor
+===================================================
 
 INSTALL (no admin rights needed):
 
@@ -253,23 +253,57 @@ INSTALL (no admin rights needed):
 
    bash "/Volumes/ClaudeUsageTracker/install.sh"
 
-4. Done! Look for the usage indicator in your menu bar.
+4. IMPORTANT: Restart Claude Code after installing.
+   Close your current session and run 'claude' again.
+
+5. Done! Look for the usage indicator in your menu bar.
    The app auto-starts at login.
 
-Requirements:
+Upgrading? Just run the same command — no uninstall needed.
+
+WHAT IT DOES:
+
+- Shows 5h/7d usage percentage in your menu bar
+- Alerts at 90%, 95%, and 100% so you can pace yourself
+- Per-model token breakdowns (Opus, Sonnet) across all timeframes
+- Updates automatically every 2-5 min — even when Claude isn't open
+- Zero token cost — only reads usage metadata
+
+WHAT THE INSTALLER SETS UP:
+
+- App in ~/Applications (with autostart at login)
+- Statusline script for token tracking in Claude Code terminal
+- Claude Code settings.json configuration
+- Backs up your existing statusline if you have a custom one
+
+REQUIREMENTS:
+
 - macOS 13+ (Apple Silicon)
-- Claude Code installed and logged in
+- Claude Code CLI installed and logged in (run 'claude' once)
+- jq installed (brew install jq) — needed for token breakdowns
 
-The app reads your Claude Code OAuth token from Keychain
-to fetch usage data from the Anthropic API every 2-5 minutes.
-No tokens are consumed — it only reads usage metadata.
+FIRST LAUNCH:
 
-To uninstall (paste into Terminal):
+The app will ask for consent to read your Claude Code OAuth
+token from Keychain. This is read-only, no tokens are consumed,
+and nothing is cached. Click "Approve" to start.
+
+TROUBLESHOOTING:
+
+- Token counts show 0? Restart Claude Code after installing.
+- Still 0? Check jq is installed: which jq
+- Menu bar shows dash? Claude Code needs to be logged in.
+- App not starting at login? Re-run the install command.
+
+TO UNINSTALL (paste into Terminal):
 
   pkill ClaudeUsageTracker
   launchctl unload ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
   rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
   rm -rf ~/Applications/ClaudeUsageTracker.app
+
+Full docs: https://fiskaly.atlassian.net/wiki/spaces/fin/pages/2753200183
+GitHub: https://github.com/beniamincostas/claude-usage-tracker
 README
 
 # Generate background image (arrow pointing app → Applications)
