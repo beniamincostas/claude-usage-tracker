@@ -25,11 +25,11 @@ final class OAuthManager: ObservableObject {
     private var refreshTask: Task<Void, Never>?
 
     init() {
-        // Only check stored tokens if OAuth was previously selected
-        if UserDefaults.standard.string(forKey: "authMethod") == "oauth",
-           loadAccessToken() != nil {
+        // Only mark as authenticated if OAuth was previously selected.
+        // Don't touch Keychain here — defer to first getAccessToken() call
+        // to avoid macOS Keychain ACL prompts on launch.
+        if UserDefaults.standard.string(forKey: "authMethod") == "oauth" {
             isAuthenticated = true
-            startTokenRefreshLoop()
         }
     }
 
