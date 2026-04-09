@@ -265,8 +265,8 @@ chmod +x "${DMG_STAGING}/install.sh"
 
 # Create README — named so it's obvious in the DMG
 cat > "${DMG_STAGING}/README — NO ADMIN INSTALL.txt" << 'README'
-ClaudeUsageTracker v1.3.0 — Menu Bar Usage Monitor
-===================================================
+ClaudeUsageTracker v2.0.0-beta — Menu Bar Usage Monitor
+========================================================
 
 INSTALL (no admin rights needed):
 
@@ -276,47 +276,58 @@ INSTALL (no admin rights needed):
 
    bash "/Volumes/ClaudeUsageTracker/install.sh"
 
-4. IMPORTANT: Restart Claude Code after installing.
-   Close your current session and run 'claude' again.
-
-5. Done! Look for the usage indicator in your menu bar.
-   The app auto-starts at login.
+4. Done! The app launches and shows the auth choice screen.
 
 Upgrading? Just run the same command — no uninstall needed.
+
+AUTHENTICATION:
+
+On first launch, choose how to connect:
+
+  Option A — Login with Anthropic (recommended)
+    Opens your browser. Log in, copy the code, paste in the app.
+    No Claude Code needed. Works independently.
+
+  Option B — Use Claude Code Keychain (fallback)
+    Reads Claude Code's token. Requires Claude Code CLI
+    installed and logged in (run 'claude' once).
+
+You can switch anytime via "Switch Account" in the app footer.
 
 WHAT IT DOES:
 
 - Shows 5h/7d usage percentage in your menu bar
 - Alerts at 90%, 95%, and 100% so you can pace yourself
-- Per-model token breakdowns (Opus, Sonnet) across all timeframes
-- Updates automatically every 2-5 min — even when Claude isn't open
+- Simple/Detailed toggle: percentages only or full token breakdowns
+- Updates automatically every 2-5 min
 - Zero token cost — only reads usage metadata
 
 WHAT THE INSTALLER SETS UP:
 
 - App in ~/Applications (with autostart at login)
-- Statusline script for token tracking in Claude Code terminal
+- Statusline script for token tracking (optional, for Detailed mode)
 - Claude Code settings.json configuration
 - Backs up your existing statusline if you have a custom one
 
 REQUIREMENTS:
 
 - macOS 13+ (Apple Silicon)
-- Claude Code CLI installed and logged in (run 'claude' once)
-- jq installed (brew install jq) — needed for token breakdowns
 
-FIRST LAUNCH:
-
-The app will ask for consent to read your Claude Code OAuth
-token from Keychain. This is read-only, no tokens are consumed,
-and nothing is cached. Click "Approve" to start.
+Optional (for Detailed token breakdowns):
+- Claude Code CLI installed (run 'claude' once)
+- jq installed (brew install jq)
 
 TROUBLESHOOTING:
 
-- Token counts show 0? Restart Claude Code after installing.
-- Still 0? Check jq is installed: which jq
-- Menu bar shows dash? Claude Code needs to be logged in.
-- App not starting at login? Re-run the install command.
+- App shows "Waiting for Claude Code"?
+  → Choose OAuth login instead, or install Claude Code CLI.
+- Token counts show 0 in Detailed mode?
+  → Restart Claude Code after installing (exit, run 'claude').
+  → Check jq: which jq
+- Session expired?
+  → Click "Switch Account" and log in again.
+- App not starting at login?
+  → Re-run the install command.
 
 TO UNINSTALL (paste into Terminal):
 
