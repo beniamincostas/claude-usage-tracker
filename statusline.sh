@@ -90,53 +90,6 @@ fmt_tokens() {
   }'
 }
 
-# --- helper: format cost as $X.XX ---
-fmt_cost() {
-  printf '$%.2f' "$1"
-}
-
-# --- helper: return input and output price per million tokens for a model ID ---
-# Outputs two lines: input_price output_price
-# Patterns are intentionally broad (glob prefix) so new minor versions are
-# automatically priced at the correct tier without requiring script changes.
-model_pricing() {
-  local mid="$1"
-  case "$mid" in
-    # Opus 4.5+ (cheaper tier: $5/$25)
-    claude-opus-4-[5-9]*)
-      echo "5 25" ;;
-    # Opus 4.0/4.1 (original pricing: $15/$75)
-    claude-opus-4*)
-      echo "15 75" ;;
-    # Sonnet 4.x family and claude-3-7 (extended thinking / hybrid reasoning)
-    claude-sonnet-4*|claude-3-7*)
-      echo "3 15" ;;
-    # Haiku 4.5+ ($1/$5)
-    claude-haiku-4-[5-9]*)
-      echo "1 5" ;;
-    # Haiku pre-4.5 and claude-3-5-haiku ($0.80/$4)
-    claude-haiku-4*|claude-3-5-haiku*)
-      echo "0.80 4" ;;
-    # Haiku 3 family
-    claude-haiku-3*|claude-3-haiku*)
-      echo "0.25 1.25" ;;
-    # Legacy claude-3-5-sonnet (all date-stamped variants)
-    claude-3-5-sonnet*)
-      echo "3 15" ;;
-    # Legacy claude-3-opus
-    claude-3-opus*)
-      echo "15 75" ;;
-    # Legacy claude-3-sonnet
-    claude-3-sonnet*)
-      echo "3 15" ;;
-    *)
-      echo "3 15" ;;
-  esac
-}
-
-# Pricing for the current session model
-read -r SESS_INPUT_PRICE SESS_OUTPUT_PRICE <<< "$(model_pricing "$MODEL_ID")"
-
 # -----------------------------------------------------------------------
 # Persistent monthly + weekly token tracking
 # -----------------------------------------------------------------------
@@ -488,10 +441,10 @@ colorize() {
 }
 
 # --- helper: print one data row ---
-# Arguments: label bar_raw bar_color pct_raw in_tok in_cost out_tok out_cost total [trail]
+# Arguments: label bar_raw bar_color pct_raw in_tok ignored out_tok ignored total [trail]
 print_row() {
   local label="$1" bar_raw="$2" bar_color="$3" pct_raw="$4"
-  local in_tok="$5" in_cost="$6" out_tok="$7" out_cost="$8" total="$9"
+  local in_tok="$5" out_tok="$7" total="$9"
   local trail="${10:-}"
 
   local label_f; printf -v label_f "%-9s" "$label"
@@ -501,39 +454,33 @@ print_row() {
     printf -v pct_f "%3d%%" "$pct_raw"
     bar_f=$(colorize "$bar_color" "$bar_raw")
   elif [ -n "$bar_raw" ] && [ -n "$bar_color" ]; then
-    # No percentage, but show a colored placeholder bar
     bar_f=$(colorize "$bar_color" "$bar_raw")
-    pct_f="    "         # 4 spaces (blank pct)
+    pct_f="    "
   else
-    bar_f="          "   # 10 spaces
-    pct_f="    "         # 4 spaces
+    bar_f="          "
+    pct_f="    "
   fi
 
-  local in_tok_f in_cost_f out_tok_f out_cost_f total_f
+  local in_tok_f out_tok_f total_f
   printf -v in_tok_f   "%13s" "$in_tok"
-  printf -v in_cost_f  "%10s" "$in_cost"
   printf -v out_tok_f  "%13s" "$out_tok"
-  printf -v out_cost_f "%10s" "$out_cost"
   printf -v total_f    "%10s" "$total"
 
-  local in_cost_c out_cost_c total_c
-  in_cost_c=$(colorize  "$YELLOW" "$in_cost_f")
-  out_cost_c=$(colorize "$YELLOW" "$out_cost_f")
-  total_c=$(colorize    "$YELLOW" "$total_f")
+  local total_c
+  total_c=$(colorize "$YELLOW" "$total_f")
 
   local trail_str=""; [ -n "$trail" ] && trail_str="  ${trail}"
 
-  echo -e "${label_f} ${bar_f} ${pct_f} │ ${in_tok_f} ${in_cost_c} │ ${out_tok_f} ${out_cost_c} │ ${total_c}${trail_str}"
+  echo -e "${label_f} ${bar_f} ${pct_f} │ ${in_tok_f} │ ${out_tok_f} │ ${total_c}${trail_str}"
 }
 
 # --- helper: print one model breakdown row ---
 # The model name spans the full LEFT_AREA (25 chars) so │ stays aligned.
-# Arguments: prefix short_name in_tok in_cost out_tok out_cost total
+# Arguments: prefix short_name in_tok ignored out_tok ignored total
 print_model_row() {
   local prefix="$1" short_name="$2"
-  local in_tok="$3" in_cost="$4" out_tok="$5" out_cost="$6" total="$7"
+  local in_tok="$3" out_tok="$5" total="$7"
 
-  # Raw label: prefix + space + name; pad/trim to LEFT_AREA chars
   local raw_label="${prefix} ${short_name}"
   local raw_len=${#raw_label}
   local pad_needed=$(( LEFT_AREA - raw_len ))
@@ -542,19 +489,15 @@ print_model_row() {
 
   local colored_label="${CYAN}${prefix}${RESET} ${short_name}"
 
-  local in_tok_f in_cost_f out_tok_f out_cost_f total_f
+  local in_tok_f out_tok_f total_f
   printf -v in_tok_f   "%13s" "$in_tok"
-  printf -v in_cost_f  "%10s" "$in_cost"
   printf -v out_tok_f  "%13s" "$out_tok"
-  printf -v out_cost_f "%10s" "$out_cost"
   printf -v total_f    "%10s" "$total"
 
-  local in_cost_c out_cost_c total_c
-  in_cost_c=$(colorize  "$YELLOW" "$in_cost_f")
-  out_cost_c=$(colorize "$YELLOW" "$out_cost_f")
-  total_c=$(colorize    "$YELLOW" "$total_f")
+  local total_c
+  total_c=$(colorize "$YELLOW" "$total_f")
 
-  echo -e "${colored_label}${pad_str} │ ${in_tok_f} ${in_cost_c} │ ${out_tok_f} ${out_cost_c} │ ${total_c}"
+  echo -e "${colored_label}${pad_str} │ ${in_tok_f} │ ${out_tok_f} │ ${total_c}"
 }
 
 # -----------------------------------------------------------------------
@@ -595,26 +538,11 @@ model_breakdown_lines() {
     local mcw="${rest%%:*}"
     local mcr="${rest#*:}"
 
-    # Pricing for this model
-    local mp_in mp_out
-    read -r mp_in mp_out <<< "$(model_pricing "$mid_entry")"
-
-    # Cost with cache: subtract cache from input to get base_in, then add cache at correct rates
-    local mc_in mc_out mc_total
-    mc_in=$(awk  "BEGIN {
-      base_in = $min - $mcw - $mcr
-      if (base_in < 0) base_in = 0
-      printf \"%.4f\", base_in / 1000000 * $mp_in + $mcw / 1000000 * $mp_in * 1.25 + $mcr / 1000000 * $mp_in * 0.10
-    }")
-    mc_out=$(awk "BEGIN {printf \"%.4f\", $mout / 1000000 * $mp_out}")
-    mc_total=$(awk "BEGIN {printf \"%.4f\", $mc_in + $mc_out}")
-
-    local min_fmt mout_fmt mc_in_fmt mc_out_fmt mc_total_fmt
+    local min_fmt mout_fmt mtotal mtotal_fmt
     min_fmt=$(fmt_tokens "$min")
     mout_fmt=$(fmt_tokens "$mout")
-    mc_in_fmt=$(fmt_cost "$mc_in")
-    mc_out_fmt=$(fmt_cost "$mc_out")
-    mc_total_fmt=$(fmt_cost "$mc_total")
+    mtotal=$(( min + mout ))
+    mtotal_fmt=$(fmt_tokens "$mtotal")
 
     # Derive a short display name from the model ID
     # e.g. claude-sonnet-4-6 -> Sonnet 4.6 ; claude-opus-4-5 -> Opus 4.5
@@ -645,136 +573,23 @@ model_breakdown_lines() {
     fi
 
     print_model_row "$prefix" "$short_name" \
-      "$min_fmt" "$mc_in_fmt" \
-      "$mout_fmt" "$mc_out_fmt" \
-      "$mc_total_fmt"
+      "$min_fmt" "" \
+      "$mout_fmt" "" \
+      "$mtotal_fmt"
   done
 }
 
 # -----------------------------------------------------------------------
 # Cost calculations (session uses current model pricing)
 # Cache write tokens are billed at 1.25× input price; cache read at 0.1× input price.
-# TOTAL_IN (cumulative) already includes cache tokens, so we subtract the cache
-# portion and re-add it at the correct rates to avoid double-counting.
-# -----------------------------------------------------------------------
-SESS_IN_COST=$(awk "BEGIN {
-  base_in = ($TOTAL_IN - $CACHE_WRITE - $CACHE_READ)
-  if (base_in < 0) base_in = 0
-  printf \"%.4f\", base_in / 1000000 * $SESS_INPUT_PRICE \
-    + $CACHE_WRITE / 1000000 * $SESS_INPUT_PRICE * 1.25 \
-    + $CACHE_READ  / 1000000 * $SESS_INPUT_PRICE * 0.10
-}")
-SESS_OUT_COST=$(awk "BEGIN {printf \"%.4f\", $TOTAL_OUT / 1000000 * $SESS_OUTPUT_PRICE}")
-SESS_TOTAL=$(awk    "BEGIN {printf \"%.4f\", $SESS_IN_COST + $SESS_OUT_COST}")
-
-# Shared awk pricing program — used by all four period cost calculations below.
-# The price() function mirrors the bash model_pricing() case statement exactly.
-# Patterns use prefix matching so all minor versions (4-5, 4-6, …) are covered
-# without needing to enumerate each one explicitly.
-# Input: model_id raw_input raw_output cache_write cache_read (5 fields per line)
-# Cache write tokens billed at 1.25× input price; cache read at 0.1× input price.
-# raw_input already includes cache tokens, so subtract them to avoid double-counting.
-AWK_PRICE_PROG='
-  function price(mid,   ip,op) {
-    # Opus 4.5+ (cheaper tier: $5/$25)
-    if      (mid ~ /^claude-opus-4-[5-9]/)                          { ip=5;    op=25   }
-    # Opus 4.0/4.1 (original: $15/$75)
-    else if (mid ~ /^claude-opus-4/)                                { ip=15;   op=75   }
-    # Sonnet 4.x and claude-3-7 (extended thinking / hybrid reasoning)
-    else if (mid ~ /^claude-sonnet-4/ || mid ~ /^claude-3-7/)      { ip=3;    op=15   }
-    # Haiku 4.5+ ($1/$5)
-    else if (mid ~ /^claude-haiku-4-[5-9]/)                         { ip=1;    op=5    }
-    # Haiku pre-4.5 and claude-3-5-haiku ($0.80/$4)
-    else if (mid ~ /^claude-haiku-4/ || mid ~ /^claude-3-5-haiku/) { ip=0.80; op=4    }
-    # Haiku 3 (claude-3-haiku)
-    else if (mid ~ /^claude-haiku-3/ || mid ~ /^claude-3-haiku/)   { ip=0.25; op=1.25 }
-    # Legacy claude-3-5-sonnet (date-stamped variants)
-    else if (mid ~ /^claude-3-5-sonnet/)                            { ip=3;    op=15   }
-    # Legacy claude-3-opus
-    else if (mid ~ /^claude-3-opus/)                                { ip=15;   op=75   }
-    # Legacy claude-3-sonnet
-    else if (mid ~ /^claude-3-sonnet/)                              { ip=3;    op=15   }
-    # Unknown model: default to Sonnet 4.x pricing
-    else                                                             { ip=3;    op=15   }
-    return ip" "op
-  }
-  {
-    split(price($1), p, " ")
-    base_in = $2 - $4 - $5
-    if (base_in < 0) base_in = 0
-    total += base_in/1000000*p[1] + $3/1000000*p[2] + $4/1000000*p[1]*1.25 + $5/1000000*p[1]*0.10
-  }
-  END { printf "%.4f", total }
-'
-
-# Weekly — sum across all models from the saved log for accurate multi-model cost
-WEEK_TOTAL_COST=$(jq -r '
-  .models // {} |
-  to_entries[] |
-  select((.value.week_input_tokens // 0) > 0 or (.value.week_output_tokens // 0) > 0 or (.value.week_cache_write_tokens // 0) > 0 or (.value.week_cache_read_tokens // 0) > 0) |
-  "\(.key) \(.value.week_input_tokens // 0) \(.value.week_output_tokens // 0) \(.value.week_cache_write_tokens // 0) \(.value.week_cache_read_tokens // 0)"
-' "$USAGE_FILE" 2>/dev/null | awk "$AWK_PRICE_PROG")
-[ -z "$WEEK_TOTAL_COST" ] && WEEK_TOTAL_COST="0.0000"
-
-# WEEK_IN_COST and WEEK_OUT_COST are not used in the table (WEEK_TOTAL_COST covers multi-model);
-# keep them as zero to avoid misleading single-model pricing on blended totals.
-WEEK_IN_COST="0.0000"
-WEEK_OUT_COST="0.0000"
-
-# Monthly — same approach
-MONTH_TOTAL_COST=$(jq -r '
-  .models // {} |
-  to_entries[] |
-  select((.value.month_input_tokens // 0) > 0 or (.value.month_output_tokens // 0) > 0 or (.value.month_cache_write_tokens // 0) > 0 or (.value.month_cache_read_tokens // 0) > 0) |
-  "\(.key) \(.value.month_input_tokens // 0) \(.value.month_output_tokens // 0) \(.value.month_cache_write_tokens // 0) \(.value.month_cache_read_tokens // 0)"
-' "$USAGE_FILE" 2>/dev/null | awk "$AWK_PRICE_PROG")
-[ -z "$MONTH_TOTAL_COST" ] && MONTH_TOTAL_COST="0.0000"
-
-# MONTH_IN_COST and MONTH_OUT_COST are not used in the table (MONTH_TOTAL_COST covers multi-model);
-# keep them as zero to avoid misleading single-model pricing on blended totals.
-MONTH_IN_COST="0.0000"
-MONTH_OUT_COST="0.0000"
-
-# Daily — sum across all models
-DAY_TOTAL_COST=$(jq -r '
-  .models // {} |
-  to_entries[] |
-  select((.value.day_input_tokens // 0) > 0 or (.value.day_output_tokens // 0) > 0 or (.value.day_cache_write_tokens // 0) > 0 or (.value.day_cache_read_tokens // 0) > 0) |
-  "\(.key) \(.value.day_input_tokens // 0) \(.value.day_output_tokens // 0) \(.value.day_cache_write_tokens // 0) \(.value.day_cache_read_tokens // 0)"
-' "$USAGE_FILE" 2>/dev/null | awk "$AWK_PRICE_PROG")
-[ -z "$DAY_TOTAL_COST" ] && DAY_TOTAL_COST="0.0000"
-
-# DAY_IN_COST and DAY_OUT_COST are not used in the table (DAY_TOTAL_COST covers multi-model).
-DAY_IN_COST="0.0000"
-DAY_OUT_COST="0.0000"
-
-# Calendar-day — sum across all models
-CAL_DAY_TOTAL_COST=$(jq -r '
-  .models // {} |
-  to_entries[] |
-  select((.value.cal_day_input_tokens // 0) > 0 or (.value.cal_day_output_tokens // 0) > 0 or (.value.cal_day_cache_write_tokens // 0) > 0 or (.value.cal_day_cache_read_tokens // 0) > 0) |
-  "\(.key) \(.value.cal_day_input_tokens // 0) \(.value.cal_day_output_tokens // 0) \(.value.cal_day_cache_write_tokens // 0) \(.value.cal_day_cache_read_tokens // 0)"
-' "$USAGE_FILE" 2>/dev/null | awk "$AWK_PRICE_PROG")
-[ -z "$CAL_DAY_TOTAL_COST" ] && CAL_DAY_TOTAL_COST="0.0000"
-
-# CAL_DAY_IN_COST and CAL_DAY_OUT_COST are not used in the table (CAL_DAY_TOTAL_COST covers multi-model).
-CAL_DAY_IN_COST="0.0000"
-CAL_DAY_OUT_COST="0.0000"
-
 # -----------------------------------------------------------------------
 # Format helpers
 # -----------------------------------------------------------------------
 TOTAL_IN_FMT=$(fmt_tokens      "$TOTAL_IN");      TOTAL_OUT_FMT=$(fmt_tokens      "$TOTAL_OUT")
-DAY_IN_FMT=$(fmt_tokens        "$DAY_IN");        DAY_OUT_FMT=$(fmt_tokens        "$DAY_OUT")
-CAL_DAY_IN_FMT=$(fmt_tokens    "$CAL_DAY_IN");    CAL_DAY_OUT_FMT=$(fmt_tokens    "$CAL_DAY_OUT")
-WEEK_IN_FMT=$(fmt_tokens       "$WEEK_IN");       WEEK_OUT_FMT=$(fmt_tokens       "$WEEK_OUT")
-MONTH_IN_FMT=$(fmt_tokens      "$MONTH_IN");      MONTH_OUT_FMT=$(fmt_tokens      "$MONTH_OUT")
-
-SESS_IN_COST_FMT=$(fmt_cost       "$SESS_IN_COST");       SESS_OUT_COST_FMT=$(fmt_cost       "$SESS_OUT_COST");       SESS_TOTAL_FMT=$(fmt_cost       "$SESS_TOTAL")
-DAY_IN_COST_FMT=$(fmt_cost        "$DAY_IN_COST");        DAY_OUT_COST_FMT=$(fmt_cost        "$DAY_OUT_COST");        DAY_TOTAL_FMT=$(fmt_cost        "$DAY_TOTAL_COST")
-CAL_DAY_IN_COST_FMT=$(fmt_cost    "$CAL_DAY_IN_COST");    CAL_DAY_OUT_COST_FMT=$(fmt_cost    "$CAL_DAY_OUT_COST");    CAL_DAY_TOTAL_FMT=$(fmt_cost    "$CAL_DAY_TOTAL_COST")
-WEEK_IN_COST_FMT=$(fmt_cost       "$WEEK_IN_COST");       WEEK_OUT_COST_FMT=$(fmt_cost       "$WEEK_OUT_COST");       WEEK_TOTAL_FMT=$(fmt_cost       "$WEEK_TOTAL_COST")
-MONTH_IN_COST_FMT=$(fmt_cost      "$MONTH_IN_COST");      MONTH_OUT_COST_FMT=$(fmt_cost      "$MONTH_OUT_COST");      MONTH_TOTAL_FMT=$(fmt_cost      "$MONTH_TOTAL_COST")
+DAY_IN_FMT=$(fmt_tokens        "$DAY_IN");        DAY_OUT_FMT=$(fmt_tokens        "$DAY_OUT");        DAY_TOTAL_FMT=$(fmt_tokens        "$((DAY_IN + DAY_OUT))")
+CAL_DAY_IN_FMT=$(fmt_tokens    "$CAL_DAY_IN");    CAL_DAY_OUT_FMT=$(fmt_tokens    "$CAL_DAY_OUT");    CAL_DAY_TOTAL_FMT=$(fmt_tokens    "$((CAL_DAY_IN + CAL_DAY_OUT))")
+WEEK_IN_FMT=$(fmt_tokens       "$WEEK_IN");       WEEK_OUT_FMT=$(fmt_tokens       "$WEEK_OUT");       WEEK_TOTAL_FMT=$(fmt_tokens       "$((WEEK_IN + WEEK_OUT))")
+MONTH_IN_FMT=$(fmt_tokens      "$MONTH_IN");      MONTH_OUT_FMT=$(fmt_tokens      "$MONTH_OUT");      MONTH_TOTAL_FMT=$(fmt_tokens      "$((MONTH_IN + MONTH_OUT))")
 
 # -----------------------------------------------------------------------
 # Context bar
@@ -810,8 +625,7 @@ fi
 # Git / worktree branch
 [ -n "$DISPLAY_BRANCH" ] && printf '%b' " | 🌿 ${DISPLAY_BRANCH}"
 printf '%b' " | $(colorize "$CTX_COLOR" "${CTX_BAR}") ${CTX_PCT}%"
-printf '%b' " | 📥 ${TOTAL_IN_FMT} (${SESS_IN_COST_FMT}) 📤 ${TOTAL_OUT_FMT} (${SESS_OUT_COST_FMT})"
-printf '%b' " | ${SESS_TOTAL_FMT}\n"
+printf '%b' " | 📥 ${TOTAL_IN_FMT} 📤 ${TOTAL_OUT_FMT}\n"
 
 # --- 2. Table header ---
 # left area: label(9) + sp(1) + bar(10) + sp(1) + pct(4) = 25 chars, matching data rows
@@ -819,11 +633,9 @@ printf -v HDR_PERIOD "%-9s" "Period"
 printf -v HDR_BAR    "%10s" "Bar"
 printf -v HDR_PCT    "%4s"  "%"
 printf -v HDR_INTOK  "%13s" "In tokens"
-printf -v HDR_INCST  "%10s" "In cost"
 printf -v HDR_OUTTOK "%13s" "Out tokens"
-printf -v HDR_OUTCST "%10s" "Out cost"
 printf -v HDR_TOTAL  "%10s" "Total"
-echo -e "${HDR_PERIOD} ${HDR_BAR} ${HDR_PCT} │ ${HDR_INTOK} ${HDR_INCST} │ ${HDR_OUTTOK} ${HDR_OUTCST} │ ${HDR_TOTAL}"
+echo -e "${HDR_PERIOD} ${HDR_BAR} ${HDR_PCT} │ ${HDR_INTOK} │ ${HDR_OUTTOK} │ ${HDR_TOTAL}"
 
 # --- 3. 5-hour / rate-limit row (only when data is available) ---
 if [ -n "$DAY_PCT_RAW" ]; then
