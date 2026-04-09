@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AuthChoiceView: View {
     @ObservedObject var oauthManager: OAuthManager
+    var message: String?
     var onKeychainSelected: () -> Void
     @State private var codeInput = ""
 
@@ -19,6 +20,14 @@ struct AuthChoiceView: View {
             }
 
             Divider()
+
+            if let message {
+                Text(message)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 4)
+            }
 
             if oauthManager.isLoggingIn {
                 VStack(alignment: .leading, spacing: 10) {

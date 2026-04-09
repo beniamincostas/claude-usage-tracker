@@ -9,6 +9,7 @@ final class OAuthManager: ObservableObject {
     @Published var isAuthenticated = false
     @Published var isLoggingIn = false
     @Published var loginError: String?
+    @Published var logoutReason: String?  // nil, "sessionExpired", "noToken", "networkError"
 
     private static let clientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     private static let authorizeURL = "https://claude.ai/oauth/authorize"
@@ -98,6 +99,7 @@ final class OAuthManager: ObservableObject {
             isAuthenticated = true
             isLoggingIn = false
             loginError = nil
+            logoutReason = nil
             pkceVerifier = nil
             pkceState = nil
             startTokenRefreshLoop()
@@ -112,13 +114,16 @@ final class OAuthManager: ObservableObject {
     // #3: Refresh gate — prevents concurrent refresh calls from racing
     func getAccessToken() async -> String? {
         guard let token = loadAccessToken() else {
-            // #4: No token in Keychain — bounce back to auth screen
-            if isAuthenticated { logout() }
+            if isAuthenticated {
+                logoutReason = "noToken"
+                logout()
+            }
             return nil
         }
 
         if let expiresAt = loadExpiresAt(), Date.now.timeIntervalSince1970 > (expiresAt - 300) {
             guard let rt = loadRefreshToken(), !rt.isEmpty else {
+                logoutReason = "noToken"
                 logout()
                 return nil
             }
@@ -135,8 +140,9 @@ final class OAuthManager: ObservableObject {
                 pendingRefresh = nil
                 saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
                 return tokens.accessToken
-            } catch {
+            } catch let error as NSError {
                 pendingRefresh = nil
+                logoutReason = error.domain == NSURLErrorDomain ? "networkError" : "sessionExpired"
                 logout()
                 return nil
             }

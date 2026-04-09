@@ -13,6 +13,34 @@ struct UsagePopoverView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         header.padding(.bottom, 2)
 
+                        // Status banner for runtime errors
+                        if let msg = viewModel.statusMessage {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                Text(msg)
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundStyle(.orange)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                        }
+
+                        // Token data hint when Details is ON but no data
+                        if showTokenDetails, let hint = viewModel.tokenDataHint {
+                            HStack(spacing: 6) {
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 10))
+                                Text(hint)
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.bgCardHover, in: RoundedRectangle(cornerRadius: 6))
+                        }
+
                         // 5-Hour Window (shortest timeframe first)
                         if viewModel.usage != nil || viewModel.apiUsage != nil {
                             let t5h = showTokenDetails ? viewModel.tokens(for: .fiveHour) : (0, 0, 0, 0)

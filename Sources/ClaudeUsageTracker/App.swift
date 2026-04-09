@@ -20,6 +20,20 @@ struct ClaudeUsageTrackerApp: App {
         (authMethod == "keychain" && keychainApproved)
     }
 
+    private var logoutMessage: String? {
+        guard let reason = oauthManager.logoutReason else { return nil }
+        switch reason {
+        case "sessionExpired":
+            return "Session expired. Please log in again."
+        case "noToken":
+            return "No saved login found. Please authenticate."
+        case "networkError":
+            return "Cannot reach Anthropic. Check your connection and try again."
+        default:
+            return nil
+        }
+    }
+
     init() {
         Task { await UpdateChecker().checkForUpdate() }
     }
@@ -29,7 +43,7 @@ struct ClaudeUsageTrackerApp: App {
             if isAuthenticated {
                 UsagePopoverView(viewModel: viewModel, onLogout: logout)
             } else {
-                AuthChoiceView(oauthManager: oauthManager, onKeychainSelected: selectKeychain)
+                AuthChoiceView(oauthManager: oauthManager, message: logoutMessage, onKeychainSelected: selectKeychain)
             }
         } label: {
             MenuBarLabel(viewModel: viewModel)

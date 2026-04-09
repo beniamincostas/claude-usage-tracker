@@ -88,7 +88,7 @@ cp "${SCRIPT_DIR}/statusline.sh" "${DMG_STAGING}/statusline.sh"
 # Create the install script inside DMG — no admin rights required
 cat > "${DMG_STAGING}/install.sh" << 'INSTALL'
 #!/bin/bash
-set -euo pipefail
+# No set -e — we handle errors per step
 
 APP_NAME="ClaudeUsageTracker"
 BUNDLE_ID="com.fiskaly.claude-usage-tracker"
@@ -97,6 +97,12 @@ SOURCE="${SCRIPT_DIR}/${APP_NAME}.app"
 DEST_DIR="$HOME/Applications"
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
 LAUNCH_AGENT_PLIST="${LAUNCH_AGENT_DIR}/${BUNDLE_ID}.plist"
+
+# Track results for summary
+NOTES=()
+PASS="✓"
+FAIL="✗"
+R1="" R2="" R3="" R4="" R5="" R6=""
 
 echo ""
 echo "  Installing ${APP_NAME}..."
@@ -108,54 +114,33 @@ if [ ! -d "$SOURCE" ]; then
     exit 1
 fi
 
-# Check dependencies
+# Pre-checks (info only, never block)
+HAS_CLAUDE=true; HAS_JQ=true
 if ! command -v claude &>/dev/null; then
-    echo ""
-    echo "  ⚠ WARNING: Claude Code CLI not found."
-    echo "  The app requires Claude Code installed and logged in."
-    echo ""
-    echo "  To install: npm install -g @anthropic-ai/claude-code"
-    echo "  Then run: claude (and follow the login prompt)"
-    echo ""
-    read -p "  Continue anyway? [y/N] " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+    HAS_CLAUDE=false
+    NOTES+=("Claude Code CLI not found — install: npm install -g @anthropic-ai/claude-code && claude")
 fi
-
 if ! command -v jq &>/dev/null; then
-    echo ""
-    echo "  ⚠ WARNING: 'jq' is not installed."
-    echo "  The app will show rate limit percentages (from API),"
-    echo "  but token breakdowns will not work without jq."
-    echo ""
-    echo "  To install jq:"
-    echo "    brew install jq"
-    echo ""
-    echo "  If you don't have Homebrew:"
-    echo "    /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-    echo "    brew install jq"
-    echo ""
-    read -p "  Continue without jq? [y/N] " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "  Install jq first, then re-run this script."
-        exit 1
-    fi
+    HAS_JQ=false
+    NOTES+=("jq not found — token breakdowns need it: brew install jq")
 fi
 
-# 1. Copy app to ~/Applications
+# 1. Copy app to ~/Applications (CRITICAL — abort if fails)
 mkdir -p "$DEST_DIR"
 pkill -f "${APP_NAME}" 2>/dev/null || true
 sleep 0.3
 rm -rf "${DEST_DIR}/${APP_NAME}.app"
-cp -R "$SOURCE" "${DEST_DIR}/"
-xattr -cr "${DEST_DIR}/${APP_NAME}.app" 2>/dev/null || true
-echo "  [1/3] Copied to ${DEST_DIR}/${APP_NAME}.app"
+if cp -R "$SOURCE" "${DEST_DIR}/" 2>/dev/null; then
+    xattr -cr "${DEST_DIR}/${APP_NAME}.app" 2>/dev/null || true
+    R1="$PASS"
+else
+    R1="$FAIL"
+    echo "  $FAIL App copy failed — check disk space and permissions."
+    exit 1
+fi
 
 # 2. Set up autostart (LaunchAgent)
-mkdir -p "${LAUNCH_AGENT_DIR}"
+mkdir -p "${LAUNCH_AGENT_DIR}" 2>/dev/null
 cat > "${LAUNCH_AGENT_PLIST}" << PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -176,8 +161,12 @@ cat > "${LAUNCH_AGENT_PLIST}" << PLISTEOF
 PLISTEOF
 
 launchctl unload "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
-launchctl load "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
-echo "  [2/5] Autostart configured (launches at login)"
+if launchctl load "${LAUNCH_AGENT_PLIST}" 2>/dev/null; then
+    R2="$PASS"
+else
+    R2="$FAIL"
+    NOTES+=("Autostart failed — app works but won't start at login. Re-run install to fix.")
+fi
 
 # 3. Install statusline.sh for token tracking
 CLAUDE_DIR="$HOME/.claude"
@@ -185,23 +174,25 @@ STATUSLINE_SRC="${SCRIPT_DIR}/statusline.sh"
 STATUSLINE_DEST="${CLAUDE_DIR}/statusline.sh"
 
 if [ -f "$STATUSLINE_SRC" ]; then
-    mkdir -p "$CLAUDE_DIR"
-    # Backup existing statusline if it differs from ours
+    mkdir -p "$CLAUDE_DIR" 2>/dev/null
     if [ -f "$STATUSLINE_DEST" ] && ! diff -q "$STATUSLINE_SRC" "$STATUSLINE_DEST" &>/dev/null; then
-        cp "$STATUSLINE_DEST" "${STATUSLINE_DEST}.backup"
-        echo "  [3/5] Existing statusline backed up to statusline.sh.backup"
+        cp "$STATUSLINE_DEST" "${STATUSLINE_DEST}.backup" 2>/dev/null
     fi
-    cp "$STATUSLINE_SRC" "$STATUSLINE_DEST"
-    chmod +x "$STATUSLINE_DEST"
-    echo "  [3/5] Statusline script installed"
+    if cp "$STATUSLINE_SRC" "$STATUSLINE_DEST" 2>/dev/null && chmod +x "$STATUSLINE_DEST"; then
+        R3="$PASS"
+    else
+        R3="$FAIL"
+        NOTES+=("Statusline install failed — token breakdowns won't work. Check ~/.claude/ permissions.")
+    fi
 else
-    echo "  [3/5] Statusline script not found — skipping (token breakdown won't be available)"
+    R3="$FAIL"
+    NOTES+=("Statusline script not in DMG — token breakdowns not available.")
 fi
 
 # 4. Configure statusline in Claude Code settings.json
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
 if command -v python3 &>/dev/null; then
-    python3 -c "
+    if python3 -c "
 import json, os, sys, tempfile
 path = sys.argv[1]
 sl_path = sys.argv[2]
@@ -215,22 +206,54 @@ tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
 with os.fdopen(tmp_fd, 'w') as f:
     json.dump(settings, f, indent=2)
 os.replace(tmp_path, path)
-" "$SETTINGS_FILE" "$STATUSLINE_DEST"
-    echo "  [4/5] Claude Code settings updated (statusline enabled)"
+" "$SETTINGS_FILE" "$STATUSLINE_DEST" 2>/dev/null; then
+        R4="$PASS"
+    else
+        R4="$FAIL"
+        NOTES+=("Settings update failed — add statusLine config to ~/.claude/settings.json manually.")
+    fi
 else
-    echo "  [4/5] python3 not found — add statusLine config to ~/.claude/settings.json manually"
+    R4="$FAIL"
+    NOTES+=("python3 not found — add statusLine config to ~/.claude/settings.json manually.")
 fi
 
-# 5. App launched via LaunchAgent (RunAtLoad=true)
-echo "  [5/5] App launched — check your menu bar!"
+# 5. Launch app
+if [ "$R2" = "$PASS" ]; then
+    R5="$PASS"  # LaunchAgent started it via RunAtLoad
+else
+    # Fallback: open directly
+    if open "${DEST_DIR}/${APP_NAME}.app" 2>/dev/null; then
+        R5="$PASS"
+    else
+        R5="$FAIL"
+        NOTES+=("Could not launch app — open ~/Applications/${APP_NAME}.app manually.")
+    fi
+fi
 
+# === Summary ===
 echo ""
-echo "  Done! No admin rights were needed."
+echo "  $R1 App installed to ~/Applications"
+echo "  $R2 Autostart at login"
+echo "  $R3 Statusline (token tracking)"
+echo "  $R4 Claude Code settings configured"
+echo "  $R5 App launched"
 echo ""
-echo "  IMPORTANT: Restart Claude Code for token tracking to activate."
-echo "  Close your current Claude session and run 'claude' again."
+
+if [ ${#NOTES[@]} -gt 0 ]; then
+    echo "  Notes:"
+    for note in "${NOTES[@]}"; do
+        echo "    - $note"
+    done
+    echo ""
+fi
+
+echo "  Next steps:"
+echo "    1. Click the menu bar icon and choose OAuth or Keychain"
+if [ "$HAS_CLAUDE" = true ]; then
+    echo "    2. Restart Claude Code for token tracking (exit, then run 'claude')"
+fi
 echo ""
-echo "  To uninstall later (paste into Terminal):"
+echo "  To uninstall (paste into Terminal):"
 echo "    pkill ${APP_NAME}"
 echo "    launchctl unload ${LAUNCH_AGENT_PLIST}"
 echo "    rm ${LAUNCH_AGENT_PLIST}"

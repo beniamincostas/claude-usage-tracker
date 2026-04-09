@@ -10,8 +10,24 @@ final class UsageViewModel: ObservableObject {
     @Published var lastUpdated: Date = .now
     @Published var apiUsage: UsageAPIResponse?
     @Published var apiDataSource: DataSource = .fileOnly
+    @Published var statusMessage: String?
 
     enum DataSource { case api, fileOnly }
+
+    /// Hint for token details toggle when no data is available
+    var tokenDataHint: String? {
+        let claudeDir = Self.claudeDir
+        if !FileManager.default.fileExists(atPath: claudeDir + "/statusline.sh") {
+            return "Re-run install.sh to set up token tracking"
+        }
+        if !FileManager.default.fileExists(atPath: Self.usageFilePath) {
+            return "Start a Claude Code session for token data"
+        }
+        if usage == nil {
+            return "Waiting for Claude Code session data..."
+        }
+        return nil
+    }
 
     private var apiClient = UsageAPIClient()
     private var apiPollingTask: Task<Void, Never>?
@@ -224,24 +240,35 @@ final class UsageViewModel: ObservableObject {
             apiDataSource = .api
             lastAPISuccessTime = .now
             lastUpdated = .now
-            pollInterval = 120 // reset to base on success
+            pollInterval = 120
+            statusMessage = nil  // Clear any previous error
             recordPercentageReading()
             checkAndNotify()
 
         case .failure(let error):
             switch error {
             case .rateLimited(let retryAfter):
-                // Exponential backoff: double interval, cap at apiBackoffCap
                 let serverSuggestion = retryAfter ?? 0
                 pollInterval = min(max(pollInterval * 2, serverSuggestion), apiBackoffCap)
+                // Silent — orange dot is enough
             case .unauthorized:
-                // Token expired — will refresh on next attempt
-                pollInterval = 300 // wait 5 min before retry
+                let isOAuth = UserDefaults.standard.string(forKey: "authMethod") == "oauth"
+                if isOAuth {
+                    statusMessage = nil  // OAuth refresh handles it, logout triggers auth screen
+                } else {
+                    statusMessage = "Token expired — run any prompt in Claude Code to refresh, or switch to OAuth"
+                }
+                pollInterval = 300
+            case .noToken:
+                let isOAuth = UserDefaults.standard.string(forKey: "authMethod") == "oauth"
+                if !isOAuth {
+                    statusMessage = "Waiting for Claude Code — run 'claude' in Terminal to log in"
+                }
+                // OAuth noToken is handled by OAuthManager.logout()
             case .timeout:
-                // Retry sooner after a timeout — likely a transient Anthropic API hiccup
                 pollInterval = 30
             default:
-                break // keep current interval for other transient errors
+                break
             }
 
             // Preserve last good data — only drop after staleDataThreshold of consecutive failures
