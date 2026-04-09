@@ -83,7 +83,7 @@ cp -R "${APP_DIR}" "${DMG_STAGING}/"
 ln -s /Applications "${DMG_STAGING}/Applications"
 
 # Create the install script inside DMG — no admin rights required
-cat > "${DMG_STAGING}/Install (no admin).command" << 'INSTALL'
+cat > "${DMG_STAGING}/install.sh" << 'INSTALL'
 #!/bin/bash
 set -euo pipefail
 
@@ -153,7 +153,7 @@ echo "    rm ${LAUNCH_AGENT_PLIST}"
 echo ""
 INSTALL
 
-chmod +x "${DMG_STAGING}/Install (no admin).command"
+chmod +x "${DMG_STAGING}/install.sh"
 
 # Create README — named so it's obvious in the DMG
 cat > "${DMG_STAGING}/README — NO ADMIN INSTALL.txt" << 'README'
@@ -166,7 +166,7 @@ INSTALL (no admin rights needed):
 2. Open Terminal (Cmd+Space → type "Terminal" → Enter)
 3. Paste this command and press Enter:
 
-   bash "/Volumes/ClaudeUsageTracker/Install (no admin).command"
+   bash "/Volumes/ClaudeUsageTracker/install.sh"
 
 4. Done! Look for the usage indicator in your menu bar.
    The app auto-starts at login.
@@ -234,7 +234,7 @@ tell application "Finder"
         set position of item "Applications" to {500, 190}
 
         -- Row 2: Install script + README (below)
-        set position of item "Install (no admin).command" to {180, 380}
+        set position of item "install.sh" to {180, 380}
         set position of item "README — NO ADMIN INSTALL.txt" to {480, 380}
 
         close
