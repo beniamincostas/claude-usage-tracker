@@ -746,5 +746,4 @@ if [ "$MONTH_IN" -gt 0 ] || [ "$MONTH_OUT" -gt 0 ]; then
     "$MONTH_IN_FMT"  "" \
     "$MONTH_OUT_FMT" "" \
     "$MONTH_TOTAL_FMT" "$MONTH_RESET_STR"
-  model_breakdown_lines "month"
 fi
