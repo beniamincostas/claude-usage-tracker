@@ -139,7 +139,6 @@ cat > "${LAUNCH_AGENT_PLIST}" << PLISTEOF
 PLISTEOF
 
 launchctl unload "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
-launchctl load "${LAUNCH_AGENT_PLIST}" 2>/dev/null || true
 echo "  [2/5] Autostart configured (launches at login)"
 
 # 3. Install statusline.sh for token tracking
