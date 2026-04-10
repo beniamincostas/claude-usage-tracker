@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.0.1 (2026-04-10)
+
+### UI Fixes
+- **White text for buttons & toggles** — "Switch Account", "Quit", "Cancel", and Simple/Detailed picker now readable on dark background
+- **Escalating progress bar colors** — distinct colors at each threshold: 90% light red, 95% stronger red, 100% vivid red
+- **Fixed grey bar override** — bars no longer turn grey when data is stale; danger colors always show through
+- **Version label in footer** — shows current version (e.g. v2.0.1) next to the Quit button
+
+### DMG Installer
+- **Dark fiskaly-themed DMG** — background matches app design with teal accents and branding
+- **Install.command** — double-click opens Terminal and runs the installer (no manual paste needed)
+- **Command-line first** — install command shown on background, drag-to-Applications as secondary option
+- **Hidden statusline** — .statusline.sh bundled as hidden file, auto-installed by Install.command
+- **Admin rights note** — drag-to-Applications section notes admin requirement
+- **Removed verbose README** — install script output provides all setup info
+
+### Fixes
+- **Update checker version** — currentVersion now matches release tag (no false update alerts)
+
+## v2.0.0 (2026-04-09)
+
 ## v2.0.0-beta (2026-04-09)
 
 ### New Features

@@ -82,11 +82,11 @@ cp -R "${APP_DIR}" "${DMG_STAGING}/"
 # Symlink to system Applications folder (standard drag-to-install target)
 ln -s /Applications "${DMG_STAGING}/Applications"
 
-# Copy statusline.sh to staging (will be installed to ~/.claude/)
-cp "${SCRIPT_DIR}/statusline.sh" "${DMG_STAGING}/statusline.sh"
+# Copy statusline.sh as hidden file (referenced by installer, not shown in Finder)
+cp "${SCRIPT_DIR}/statusline.sh" "${DMG_STAGING}/.statusline.sh"
 
-# Create the install script inside DMG — no admin rights required
-cat > "${DMG_STAGING}/install.sh" << 'INSTALL'
+# Create the install script — .command extension opens Terminal on double-click
+cat > "${DMG_STAGING}/Install.command" << 'INSTALL'
 #!/bin/bash
 # No set -e — we handle errors per step
 
@@ -170,7 +170,7 @@ fi
 
 # 3. Install statusline.sh for token tracking
 CLAUDE_DIR="$HOME/.claude"
-STATUSLINE_SRC="${SCRIPT_DIR}/statusline.sh"
+STATUSLINE_SRC="${SCRIPT_DIR}/.statusline.sh"
 STATUSLINE_DEST="${CLAUDE_DIR}/statusline.sh"
 
 if [ -f "$STATUSLINE_SRC" ]; then
@@ -261,88 +261,11 @@ echo "    rm -rf ~/Applications/${APP_NAME}.app"
 echo ""
 INSTALL
 
-chmod +x "${DMG_STAGING}/install.sh"
+chmod +x "${DMG_STAGING}/Install.command"
 
-# Create README — named so it's obvious in the DMG
-cat > "${DMG_STAGING}/README — NO ADMIN INSTALL.txt" << 'README'
-ClaudeUsageTracker v2.0.1 — Menu Bar Usage Monitor
-========================================================
-
-INSTALL (no admin rights needed):
-
-1. Open this DMG
-2. Open Terminal (Cmd+Space → type "Terminal" → Enter)
-3. Paste this command and press Enter:
-
-   bash "/Volumes/ClaudeUsageTracker/install.sh"
-
-4. Done! The app launches and shows the auth choice screen.
-
-Upgrading? Just run the same command — no uninstall needed.
-
-AUTHENTICATION:
-
-On first launch, choose how to connect:
-
-  Option A — Login with Anthropic (recommended)
-    Opens your browser. Log in, copy the code, paste in the app.
-    No Claude Code needed. Works independently.
-
-  Option B — Use Claude Code Keychain (fallback)
-    Reads Claude Code's token. Requires Claude Code CLI
-    installed and logged in (run 'claude' once).
-
-You can switch anytime via "Switch Account" in the app footer.
-
-WHAT IT DOES:
-
-- Shows 5h/7d usage percentage in your menu bar
-- Alerts at 90%, 95%, and 100% so you can pace yourself
-- Simple/Detailed toggle: percentages only or full token breakdowns
-- Updates automatically every 2-5 min
-- Zero token cost — only reads usage metadata
-
-WHAT THE INSTALLER SETS UP:
-
-- App in ~/Applications (with autostart at login)
-- Statusline script for token tracking (optional, for Detailed mode)
-- Claude Code settings.json configuration
-- Backs up your existing statusline if you have a custom one
-
-REQUIREMENTS:
-
-- macOS 13+ (Apple Silicon)
-
-Optional (for Detailed token breakdowns):
-- Claude Code CLI installed (run 'claude' once)
-- jq installed (brew install jq)
-
-TROUBLESHOOTING:
-
-- App shows "Waiting for Claude Code"?
-  → Choose OAuth login instead, or install Claude Code CLI.
-- Token counts show 0 in Detailed mode?
-  → Restart Claude Code after installing (exit, run 'claude').
-  → Check jq: which jq
-- Session expired?
-  → Click "Switch Account" and log in again.
-- App not starting at login?
-  → Re-run the install command.
-
-TO UNINSTALL (paste into Terminal):
-
-  pkill ClaudeUsageTracker
-  launchctl unload ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
-  rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
-  rm -rf ~/Applications/ClaudeUsageTracker.app
-
-Full docs: https://fiskaly.atlassian.net/wiki/spaces/fin/pages/2753200183
-GitHub: https://github.com/beniamincostas/claude-usage-tracker
-README
-
-# Generate background image (arrow pointing app → Applications)
+# Generate background image (dark theme with install instructions)
 echo "   Generating background image..."
-python3 "${SCRIPT_DIR}/generate-dmg-bg.py" "${DMG_STAGING}/.bg.png"
+python3 "${SCRIPT_DIR}/generate-dmg-bg.py" "${DMG_STAGING}/.bg.png" "${VERSION}"
 
 # Create a temporary read-write DMG (need r/w to apply Finder styling)
 DMG_RW="${DMG_DIR}/${APP_NAME}-rw.dmg"
@@ -380,17 +303,16 @@ tell application "Finder"
 
         set theViewOptions to icon view options of container window
         set arrangement of theViewOptions to not arranged
-        set icon size of theViewOptions to 80
-        set text size of theViewOptions to 12
+        set icon size of theViewOptions to 64
+        set text size of theViewOptions to 11
         set background picture of theViewOptions to file ".background:bg.png"
 
-        -- Row 1: App (left) → Applications (right)
-        set position of item "ClaudeUsageTracker.app" to {150, 190}
-        set position of item "Applications" to {500, 190}
+        -- Primary: Install.command (center top — double-click to install)
+        set position of item "Install.command" to {330, 130}
 
-        -- Row 2: Install script + README (below)
-        set position of item "install.sh" to {180, 380}
-        set position of item "README — NO ADMIN INSTALL.txt" to {480, 380}
+        -- Secondary: drag to Applications (requires admin)
+        set position of item "ClaudeUsageTracker.app" to {160, 360}
+        set position of item "Applications" to {500, 360}
 
         close
         open

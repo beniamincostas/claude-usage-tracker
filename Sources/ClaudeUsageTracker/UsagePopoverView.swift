@@ -429,6 +429,10 @@ struct UsagePopoverView: View {
 
             Spacer()
 
+            Text("v\(UpdateChecker.currentVersion)")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.textTertiary)
+
             Button(action: { NSApplication.shared.terminate(nil) }) {
                 Text("Quit")
                     .font(.system(size: 10, weight: .medium))
