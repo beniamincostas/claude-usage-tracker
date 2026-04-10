@@ -64,24 +64,24 @@ ctx.fillStyle = '#2DD4BF';
 ctx.font = 'bold 12px -apple-system, sans-serif';
 ctx.fillText('I N S T A L L', w / 2, 52);
 
-// Instruction above Install.command icon
+// Instruction: open README or paste command
 ctx.fillStyle = '#EFF1F3';
-ctx.font = '14px -apple-system, sans-serif';
-ctx.fillText('Double-click to install', w / 2, 72);
+ctx.font = '13px -apple-system, sans-serif';
+ctx.fillText('Open README or paste in Terminal:', w / 2, 74);
 
-// Down arrow indicator
+// Down arrow to README
 ctx.fillStyle = '#8B9299';
 ctx.beginPath();
-ctx.moveTo(w/2, 80); ctx.lineTo(w/2 - 6, 80); ctx.lineTo(w/2, 88); ctx.lineTo(w/2 + 6, 80);
+ctx.moveTo(w/2, 82); ctx.lineTo(w/2 - 6, 82); ctx.lineTo(w/2, 90); ctx.lineTo(w/2 + 6, 82);
 ctx.closePath(); ctx.fill();
 
-// [Install.command icon at (330, 130)]
+// [README.txt icon at (330, 130)]
 
-// "or open Terminal and paste:" hint
+// Code block label
 ctx.fillStyle = '#B0B8C0';
 ctx.font = '11px -apple-system, sans-serif';
 ctx.textAlign = 'center';
-ctx.fillText('or open Terminal and paste:', w / 2, 200);
+ctx.fillText('Install command (paste in Terminal):', w / 2, 200);
 
 // Code block
 const cbX = 55, cbY = 212, cbW = w - 110, cbH = 34;
@@ -101,7 +101,7 @@ ctx.fillText('$', cbX + 12, cbY + 22);
 // Command text
 ctx.fillStyle = '#EFF1F3';
 ctx.font = '11px Menlo, "SF Mono", monospace';
-ctx.fillText('bash /Volumes/ClaudeUsageTracker/Install.command', cbX + 28, cbY + 22);
+ctx.fillText('bash /Volumes/ClaudeUsageTracker/.Install.command', cbX + 28, cbY + 22);
 
 // === DIVIDER ===
 const divY = 268;

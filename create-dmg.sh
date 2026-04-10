@@ -86,7 +86,7 @@ ln -s /Applications "${DMG_STAGING}/Applications"
 cp "${SCRIPT_DIR}/statusline.sh" "${DMG_STAGING}/.statusline.sh"
 
 # Create the install script — .command extension opens Terminal on double-click
-cat > "${DMG_STAGING}/Install.command" << 'INSTALL'
+cat > "${DMG_STAGING}/.Install.command" << 'INSTALL'
 #!/bin/bash
 # No set -e — we handle errors per step
 
@@ -261,7 +261,27 @@ echo "    rm -rf ~/Applications/${APP_NAME}.app"
 echo ""
 INSTALL
 
-chmod +x "${DMG_STAGING}/Install.command"
+chmod +x "${DMG_STAGING}/.Install.command"
+
+# Create concise README
+cat > "${DMG_STAGING}/README.txt" << README
+ClaudeUsageTracker v${VERSION}
+==============================
+
+INSTALL (paste in Terminal):
+
+  bash /Volumes/ClaudeUsageTracker/.Install.command
+
+UNINSTALL:
+
+  pkill ClaudeUsageTracker
+  launchctl unload ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
+  rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
+  rm -rf ~/Applications/ClaudeUsageTracker.app
+
+Docs: https://fiskaly.atlassian.net/wiki/spaces/fin/pages/2753200183
+GitHub: https://github.com/beniamincostas/claude-usage-tracker
+README
 
 # Generate background image (dark theme with install instructions)
 echo "   Generating background image..."
@@ -307,8 +327,8 @@ tell application "Finder"
         set text size of theViewOptions to 11
         set background picture of theViewOptions to file ".background:bg.png"
 
-        -- Primary: Install.command (center top — double-click to install)
-        set position of item "Install.command" to {330, 130}
+        -- README (center top)
+        set position of item "README.txt" to {330, 130}
 
         -- Secondary: drag to Applications (requires admin)
         set position of item "ClaudeUsageTracker.app" to {160, 360}
