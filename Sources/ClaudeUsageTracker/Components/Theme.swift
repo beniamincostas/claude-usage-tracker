@@ -9,7 +9,9 @@ enum Theme {
     // Status colors (Fiskaly semantic palette)
     static let barSafe = Color(hex: 0x2DD4BF)            // Teal (on-brand safe)
     static let barWarning = Color(hex: 0xFDDD00)          // Amber
-    static let barDanger = Color(hex: 0xFF9696)           // Red
+    static let barDanger = Color(hex: 0xFF9696)           // Red (90%+)
+    static let barCritical = Color(hex: 0xFF6B6B)         // Stronger red (95%+)
+    static let barMaxed = Color(hex: 0xFF4444)            // Vivid red (100%)
 
     // Background layers (Fiskaly dark palette: bunker → deep → surface)
     static let bgPrimary = Color(hex: 0x0F181B)          // Bunker
@@ -42,6 +44,8 @@ enum Theme {
     }
 
     static func barColor(for percentage: Double) -> Color {
+        if percentage >= 100 { return barMaxed }
+        if percentage >= 95 { return barCritical }
         if percentage >= 90 { return barDanger }
         if percentage >= 70 { return barWarning }
         return barSafe

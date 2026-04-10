@@ -26,8 +26,8 @@ struct PeriodUsageView: View {
 
     private var alertBorderColor: Color {
         switch alertLevel {
-        case .maxed100: return Theme.barDanger
-        case .critical95: return Theme.barDanger.opacity(0.7)
+        case .maxed100: return Theme.barMaxed
+        case .critical95: return Theme.barCritical
         case .warning90: return Theme.barWarning.opacity(0.6)
         case .normal: return .clear
         }
@@ -44,7 +44,7 @@ struct PeriodUsageView: View {
                         .font(.system(size: 11, weight: .semibold))
                     Spacer()
                 }
-                .foregroundStyle(alertLevel >= .critical95 ? Theme.barDanger : Theme.barWarning)
+                .foregroundStyle(alertLevel == .maxed100 ? Theme.barMaxed : alertLevel >= .critical95 ? Theme.barCritical : Theme.barWarning)
                 .padding(.bottom, 2)
             }
 
@@ -72,13 +72,12 @@ struct PeriodUsageView: View {
                 HStack(spacing: 10) {
                     UsageProgressBar(
                         percentage: pct.value,
-                        height: 12,
-                        color: isStale ? Color.secondary.opacity(0.5) : nil
+                        height: 12
                     )
                     HStack(spacing: 3) {
                         Text("\(Int(pct.value))%")
                             .font(.system(size: 14, weight: .bold, design: .monospaced))
-                            .foregroundStyle(isStale ? Theme.textTertiary : Theme.barColor(for: pct.value))
+                            .foregroundStyle(Theme.barColor(for: pct.value))
                         if isStale {
                             Image(systemName: "clock.badge.exclamationmark")
                                 .font(.system(size: 9))

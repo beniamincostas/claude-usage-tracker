@@ -143,6 +143,7 @@ struct UsagePopoverView: View {
                     Text("Detailed").tag(true)
                 }
                 .pickerStyle(.segmented)
+                .colorScheme(.dark)
                 .frame(width: 120)
                 .scaleEffect(0.85)
 
@@ -414,7 +415,7 @@ struct UsagePopoverView: View {
                 Button(action: onLogout) {
                     Text("Switch Account")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
+                        .foregroundStyle(Theme.textPrimary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background(Theme.bgCardHover, in: RoundedRectangle(cornerRadius: 5))
@@ -424,18 +425,18 @@ struct UsagePopoverView: View {
 
             Text(authMethodLabel)
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(Theme.textTertiary)
+                .foregroundStyle(Theme.textSecondary)
 
             Spacer()
 
             Button(action: { NSApplication.shared.terminate(nil) }) {
                 Text("Quit")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(Theme.bgCardHover, in: RoundedRectangle(cornerRadius: 5))
-            }
+                }
             .buttonStyle(.plain)
         }
         .padding(.top, 4)

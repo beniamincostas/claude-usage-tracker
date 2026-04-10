@@ -43,7 +43,7 @@ struct AuthChoiceView: View {
                         .buttonStyle(.borderedProminent).tint(Theme.accent)
                         .disabled(codeInput.isEmpty)
                         Button("Cancel") { oauthManager.isLoggingIn = false; codeInput = "" }
-                            .buttonStyle(.plain).foregroundStyle(.secondary).font(.system(size: 11))
+                            .buttonStyle(.plain).foregroundStyle(Theme.textPrimary).font(.system(size: 11))
                     }
                 }
             } else {
@@ -80,7 +80,7 @@ struct AuthChoiceView: View {
             HStack {
                 Spacer()
                 Button("Quit") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).font(.system(size: 11))
+                    .buttonStyle(.plain).foregroundStyle(Theme.textPrimary).font(.system(size: 11))
             }
         }
         .padding(16)
