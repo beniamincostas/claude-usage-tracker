@@ -101,7 +101,7 @@ ctx.fillText('$', cbX + 12, cbY + 22);
 // Command text
 ctx.fillStyle = '#EFF1F3';
 ctx.font = '11px Menlo, "SF Mono", monospace';
-ctx.fillText('bash /Volumes/ClaudeUsageTracker/.Install.command', cbX + 28, cbY + 22);
+ctx.fillText('bash /Volumes/ClaudeUsageTracker/Install.command', cbX + 28, cbY + 22);
 
 // === DIVIDER ===
 const divY = 268;

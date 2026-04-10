@@ -83,10 +83,10 @@ cp -R "${APP_DIR}" "${DMG_STAGING}/"
 ln -s /Applications "${DMG_STAGING}/Applications"
 
 # Copy statusline.sh as hidden file (referenced by installer, not shown in Finder)
-cp "${SCRIPT_DIR}/statusline.sh" "${DMG_STAGING}/.statusline.sh"
+cp "${SCRIPT_DIR}/statusline.sh" "${DMG_STAGING}/statusline.sh"
 
 # Create the install script — .command extension opens Terminal on double-click
-cat > "${DMG_STAGING}/.Install.command" << 'INSTALL'
+cat > "${DMG_STAGING}/Install.command" << 'INSTALL'
 #!/bin/bash
 # No set -e — we handle errors per step
 
@@ -170,7 +170,7 @@ fi
 
 # 3. Install statusline.sh for token tracking
 CLAUDE_DIR="$HOME/.claude"
-STATUSLINE_SRC="${SCRIPT_DIR}/.statusline.sh"
+STATUSLINE_SRC="${SCRIPT_DIR}/statusline.sh"
 STATUSLINE_DEST="${CLAUDE_DIR}/statusline.sh"
 
 if [ -f "$STATUSLINE_SRC" ]; then
@@ -261,7 +261,7 @@ echo "    rm -rf ~/Applications/${APP_NAME}.app"
 echo ""
 INSTALL
 
-chmod +x "${DMG_STAGING}/.Install.command"
+chmod +x "${DMG_STAGING}/Install.command"
 
 # Create concise README
 cat > "${DMG_STAGING}/README.txt" << README
@@ -270,7 +270,7 @@ ClaudeUsageTracker v${VERSION}
 
 INSTALL (paste in Terminal):
 
-  bash /Volumes/ClaudeUsageTracker/.Install.command
+  bash /Volumes/ClaudeUsageTracker/Install.command
 
 UNINSTALL:
 
@@ -333,6 +333,10 @@ tell application "Finder"
         -- Secondary: drag to Applications (requires admin)
         set position of item "ClaudeUsageTracker.app" to {160, 360}
         set position of item "Applications" to {500, 360}
+
+        -- Below visible area (scrollable, not on background)
+        set position of item "Install.command" to {200, 520}
+        set position of item "statusline.sh" to {460, 520}
 
         close
         open
