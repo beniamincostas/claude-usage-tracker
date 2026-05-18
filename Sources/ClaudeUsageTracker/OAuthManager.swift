@@ -2,6 +2,7 @@ import Foundation
 import CommonCrypto
 import AppKit
 import Security
+import os.log
 
 /// Manages OAuth 2.0 PKCE flow with Anthropic's authorization endpoint.
 @MainActor
@@ -21,6 +22,8 @@ final class OAuthManager: ObservableObject {
     private static let accessTokenKey = "accessToken"
     private static let refreshTokenKey = "refreshToken"
     private static let expiresAtKey = "expiresAt"
+
+    private static let log = Logger(subsystem: "com.beniamincostas.ClaudeUsageTracker", category: "OAuthManager")
 
     private var pkceVerifier: String?
     private var pkceState: String?
@@ -47,7 +50,12 @@ final class OAuthManager: ObservableObject {
         pkceVerifier = verifier
         pkceState = state
 
-        var components = URLComponents(string: Self.authorizeURL)!
+        guard var components = URLComponents(string: Self.authorizeURL) else {
+            loginError = "Configuration error: invalid authorize URL"
+            isLoggingIn = false
+            Self.log.error("authorizeURL is not a valid URLComponents string")
+            return
+        }
         components.queryItems = [
             URLQueryItem(name: "code", value: "true"),
             URLQueryItem(name: "client_id", value: Self.clientId),
@@ -92,7 +100,19 @@ final class OAuthManager: ObservableObject {
 
         do {
             let tokens = try await exchangeCode(code: code, state: state, verifier: verifier)
-            saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
+            let saveStatus = saveTokens(accessToken: tokens.accessToken,
+                                        refreshToken: tokens.refreshToken,
+                                        expiresAt: tokens.expiresAt)
+            // #1: Surface keychain failure instead of pretending the user is logged in
+            guard saveStatus == errSecSuccess else {
+                Self.log.error("Keychain save failed during login (OSStatus \(saveStatus))")
+                loginError = "Could not save credentials to Keychain (OSStatus \(saveStatus))"
+                isLoggingIn = false
+                isAuthenticated = false
+                pkceVerifier = nil
+                pkceState = nil
+                return
+            }
             isAuthenticated = true
             isLoggingIn = false
             loginError = nil
@@ -127,27 +147,51 @@ final class OAuthManager: ObservableObject {
             return nil
         }
 
-        if let expiresAt = loadExpiresAt(), Date.now.timeIntervalSince1970 > (expiresAt - 300) {
+        // Treat a nil expiresAt (missing / unparseable) as already-expired so we
+        // refresh proactively rather than continuing to use a token whose expiry
+        // we can no longer evaluate (issue #2).
+        let storedExpiresAt = loadExpiresAt()
+        let needsRefresh = storedExpiresAt.map { Date.now.timeIntervalSince1970 > ($0 - 300) } ?? true
+        if needsRefresh {
             guard let rt = loadRefreshToken(), !rt.isEmpty else {
                 logoutReason = "noToken"
                 logout()
                 return nil
             }
 
-            if pendingRefresh == nil {
-                pendingRefresh = Task {
-                    try await refreshAccessToken(refreshToken: rt)
-                }
+            // Dedupe concurrent refreshes: reuse the in-flight Task if present.
+            // Only the *owning* caller (the one that started the Task) is
+            // responsible for clearing pendingRefresh and persisting the result;
+            // followers just await the value.
+            let task: Task<TokenResponse, Error>
+            let isOwner: Bool
+            if let existing = pendingRefresh {
+                task = existing
+                isOwner = false
+            } else {
+                let new = Task { try await refreshAccessToken(refreshToken: rt) }
+                pendingRefresh = new
+                task = new
+                isOwner = true
             }
 
             do {
-                let tokens = try await pendingRefresh!.value
-                pendingRefresh = nil
-                saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
+                let tokens = try await task.value
+                if isOwner {
+                    pendingRefresh = nil
+                    let saveStatus = saveTokens(accessToken: tokens.accessToken,
+                                                refreshToken: tokens.refreshToken,
+                                                expiresAt: tokens.expiresAt)
+                    if saveStatus != errSecSuccess {
+                        Self.log.error("Refreshed tokens failed to persist (OSStatus \(saveStatus))")
+                        logoutReason = "keychainLocked"
+                        return nil
+                    }
+                }
                 return tokens.accessToken
             } catch {
                 // #5: Catch all errors (including CancellationError), not just NSError
-                pendingRefresh = nil
+                if isOwner { pendingRefresh = nil }
 
                 // #7: Network errors — don't delete tokens, just return nil
                 if (error as? URLError) != nil || (error as NSError).domain == NSURLErrorDomain {
@@ -203,7 +247,12 @@ final class OAuthManager: ObservableObject {
     }
 
     private func postTokenRequest(body: [String: Any]) async throws -> TokenResponse {
-        var request = URLRequest(url: URL(string: Self.tokenURL)!)
+        guard let url = URL(string: Self.tokenURL) else {
+            throw NSError(domain: "OAuthError", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid token endpoint URL"
+            ])
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -251,7 +300,12 @@ final class OAuthManager: ObservableObject {
                 guard !Task.isCancelled else { break }
                 if let rt = loadRefreshToken(), !rt.isEmpty {
                     if let tokens = try? await refreshAccessToken(refreshToken: rt) {
-                        saveTokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
+                        let status = saveTokens(accessToken: tokens.accessToken,
+                                                refreshToken: tokens.refreshToken,
+                                                expiresAt: tokens.expiresAt)
+                        if status != errSecSuccess {
+                            Self.log.error("Background refresh failed to persist (OSStatus \(status))")
+                        }
                     }
                 }
             }
@@ -281,15 +335,38 @@ final class OAuthManager: ObservableObject {
 
     // MARK: - Keychain
 
-    private func saveTokens(accessToken: String, refreshToken: String, expiresAt: Double) {
-        saveToKeychain(key: Self.accessTokenKey, value: accessToken)
-        saveToKeychain(key: Self.refreshTokenKey, value: refreshToken)
-        saveToKeychain(key: Self.expiresAtKey, value: String(expiresAt))
+    /// Persist the three credential items. Returns `errSecSuccess` only if every
+    /// `SecItemAdd` succeeded. Caller must treat any other return as a failed save.
+    @discardableResult
+    private func saveTokens(accessToken: String, refreshToken: String, expiresAt: Double) -> OSStatus {
+        let s1 = saveToKeychain(key: Self.accessTokenKey, value: accessToken)
+        let s2 = saveToKeychain(key: Self.refreshTokenKey, value: refreshToken)
+        let s3 = saveToKeychain(key: Self.expiresAtKey, value: String(expiresAt))
+        for status in [s1, s2, s3] where status != errSecSuccess { return status }
+        return errSecSuccess
     }
 
     func loadAccessToken() -> String? { loadFromKeychain(key: Self.accessTokenKey) }
     private func loadRefreshToken() -> String? { loadFromKeychain(key: Self.refreshTokenKey) }
-    private func loadExpiresAt() -> Double? { loadFromKeychain(key: Self.expiresAtKey).flatMap(Double.init) }
+
+    /// Returns the stored expiry in seconds-since-epoch. If the item is missing or
+    /// the persisted string can no longer be parsed (corruption, partial write),
+    /// returns `nil` — callers must treat `nil` as "expired" and force a refresh
+    /// rather than as "no expiry".
+    private func loadExpiresAt() -> Double? {
+        guard let raw = loadFromKeychain(key: Self.expiresAtKey) else { return nil }
+        guard let parsed = Double(raw) else {
+            Self.log.error("expiresAt keychain value could not be parsed; treating as expired")
+            return nil
+        }
+        // Reject NaN / ±infinity — those propagate through the refresh-loop's
+        // arithmetic and into `Task.sleep(for:)` with undefined behavior.
+        guard parsed.isFinite else {
+            Self.log.error("expiresAt is non-finite (nan/inf); treating as expired")
+            return nil
+        }
+        return parsed
+    }
 
     // #8: Return OSStatus for Keychain-locked detection
     private func loadAccessTokenWithStatus() -> (String?, OSStatus) {
@@ -308,7 +385,10 @@ final class OAuthManager: ObservableObject {
         return (String(data: data, encoding: .utf8), status)
     }
 
-    private func saveToKeychain(key: String, value: String) {
+    /// Replace the keychain item at `key` with `value`. Returns the `OSStatus`
+    /// from `SecItemAdd` so callers can detect a locked / failed keychain.
+    /// `SecItemDelete` is best-effort (errSecItemNotFound is fine on first save).
+    private func saveToKeychain(key: String, value: String) -> OSStatus {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
@@ -318,7 +398,7 @@ final class OAuthManager: ObservableObject {
         var add = query
         add[kSecValueData as String] = Data(value.utf8)
         add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
+        return SecItemAdd(add as CFDictionary, nil)
     }
 
     private func loadFromKeychain(key: String) -> String? {

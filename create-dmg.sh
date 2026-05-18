@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="ClaudeUsageTracker"
 BUNDLE_ID="com.fiskaly.claude-usage-tracker"
-VERSION="2.0.1"
+VERSION="2.0.2"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/.build/release"
 APP_DIR="${SCRIPT_DIR}/${APP_NAME}.app"

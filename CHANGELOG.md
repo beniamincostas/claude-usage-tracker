@@ -1,5 +1,37 @@
 # Changelog
 
+## v2.0.2 (2026-05-18)
+
+Bug-fix and hardening release. No new features, no breaking changes. Internal code review found 12 high-confidence issues across OAuth, the usage view model, and the statusline shell script. All fixed. Plus one user-facing bug discovered during smoke-testing.
+
+### Critical user-facing fix
+- **No more "Waiting for Claude Code" after launch on OAuth users** — on a fresh app launch with `authMethod = oauth` already persisted, `OAuthManager` correctly set `isAuthenticated = true` in its initialiser, but the SwiftUI `.onChange(of:isAuthenticated)` only fires on transitions, not on the initial value. As a result `viewModel.connectOAuth(...)` was never called, the `UsageAPIClient` kept its default constructor (no OAuthManager handle), and it fell back to reading the empty `Claude Code-credentials` keychain item — producing the "Waiting for Claude Code" UI hint. Fixed by attaching a `.task` modifier to the `MenuBarExtra` label so the connect step runs once at scene setup, even when `isAuthenticated` was already true at launch.
+
+### OAuth / Keychain
+- **Surface keychain save failures** — login no longer pretends to succeed when `SecItemAdd` fails (e.g. locked keychain). The user sees the actual `OSStatus` and `isAuthenticated` stays `false` instead of trapping them in an "authenticated but unusable" state.
+- **Corrupt `expiresAt` forces a refresh** — if the persisted expiry value is missing, unparseable, or non-finite (`nan`/`inf`), the app now treats the token as expired and refreshes instead of using a token whose expiry can't be evaluated.
+- **Concurrent refreshes are actually deduplicated** — fixed an ownership bug where two near-simultaneous calls to `getAccessToken()` could both start a token-endpoint POST. The follower now rides the owner's `Task`, only the owner persists.
+- **No more force-unwraps on constant URLs** — `URLComponents(authorizeURL)!` and `URL(tokenURL)!` replaced with guarded inits so a future typo in the constant becomes a logged error, not a launch-time crash.
+- **Background refresh save status is checked** — failures are logged via `os_log` (subsystem `com.beniamincostas.ClaudeUsageTracker`).
+
+### Usage view model
+- **Crash-safe trim of percentage-reading buffers** — replaced `removeFirst(count - max)` with `suffix(max)`. Behavior identical at the boundary, immune to a future off-by-one regression.
+- **Snapshot-clear logic gated on `isAPIDataFresh`** — previously `apiUsage != nil` was enough to clear the extra-token snapshot. If your API token went stale (network drop, expiry) while above 100%, the snapshot would never clear. Now it only clears when API data is genuinely fresh.
+- **JSON parse failures are visible** — corrupted `monthly_usage.json` (half-written by a `statusline.sh` crash) used to silently freeze the UI on stale data. Now logged via `os_log` so the cause is diagnosable.
+- **Explicit `@MainActor` on the API polling functions** — were already main-actor-isolated by the enclosing class, but now annotated so the contract survives any future call-site refactor. Removed a now-unnecessary `MainActor.run` hop.
+- **One notification per threshold crossing** — when usage jumps from below 90% straight to ≥100% in one tick, all crossed thresholds are now correctly marked as notified (was: only the highest, which could re-fire if value oscillated back through a lower threshold).
+
+### `statusline.sh`
+- **Forces `LC_NUMERIC=C`** so percentage parsing works on locales that use `,` as the decimal separator (de_DE, fr_FR, …). Previously these locales hit an `integer expression expected` shell error.
+- **Guards against non-macOS execution** — the script uses BSD-only `stat -f %m`; running it on Linux would silently misread the lock age. Exits cleanly with a message instead.
+- **Hard `jq` dependency check** at the top, with a `brew install jq` hint. Previously a missing `jq` produced empty output with no diagnostic.
+- **Awk `-v` for value passing** — the `DAY_IN`/`CAL_DAY_IN` fallback percentage calculation no longer interpolates shell variables into the awk program source, so a missing field can't become an awk syntax error that cascades into a downstream `[ -gt ]` failure.
+
+### Verification
+- Clean `swift build`.
+- `bash -n statusline.sh` passes.
+- Manual smoke tests: happy path, `LC_NUMERIC=de_DE`, `PATH` without `jq` — all behave as designed.
+
 ## v2.0.1 (2026-04-10)
 
 ### UI Fixes

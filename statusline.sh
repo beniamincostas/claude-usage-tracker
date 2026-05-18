@@ -1,5 +1,29 @@
 #!/bin/bash
 umask 077  # Files created by this script are user-only (0600)
+
+# --- Environment guards --------------------------------------------------
+# Force C locale for numeric parsing so `cut -d. -f1` and integer tests work
+# regardless of the user's regional setting (issue #10). Without this, locales
+# that use ',' as a decimal separator (de_DE, fr_FR, …) cause downstream
+# `[ "$pct" -gt 100 ]` tests to fail with "integer expression expected".
+export LC_NUMERIC=C
+
+# macOS-only: the lock-age path uses BSD `stat -f %m`. On Linux that flag does
+# not exist and the silent fallback would make every run think the lock is
+# stale. Refuse to run there rather than corrupt the shared usage file
+# (issue #11).
+case "$OSTYPE" in
+  darwin*) ;;
+  *) echo "claude-usage-tracker: statusline.sh is macOS-only (OSTYPE=$OSTYPE)" >&2; exit 0 ;;
+esac
+
+# Hard dependency check — jq is invoked unconditionally below. A missing jq
+# would otherwise silently produce empty output (issue #12).
+command -v jq >/dev/null 2>&1 || {
+  echo "claude-usage-tracker: 'jq' is required (install with: brew install jq)" >&2
+  exit 1
+}
+
 input=$(cat)
 
 # Parse all input fields in one jq call (one field per line preserves empty fields)
@@ -647,7 +671,11 @@ if [ -n "$DAY_PCT_RAW" ]; then
   # If server reports 0% (Enterprise plans with very high limits), fall back to
   # 5h tokens as % of today's total so the bar still shows meaningful activity
   if [ "$DAY_PCT" -eq 0 ] && [ "$CAL_DAY_IN" -gt 0 ]; then
-    DAY_PCT=$(awk "BEGIN {p=int($DAY_IN/$CAL_DAY_IN*100); if(p>100)p=100; print p}")
+    # Pass values via -v so a missing/non-numeric DAY_IN or CAL_DAY_IN doesn't
+    # become a syntax error in the awk program source (issue #9). Awk treats
+    # unset/empty -v values as 0, and the if-guard above already requires
+    # CAL_DAY_IN > 0, so the division is safe.
+    DAY_PCT=$(awk -v day_in="$DAY_IN" -v cal_day="$CAL_DAY_IN" 'BEGIN {p=int(day_in/cal_day*100); if(p>100)p=100; print p}')
   fi
   if [ "$DAY_PCT" -ge 90 ]; then DAY_COLOR="$RED"
   elif [ "$DAY_PCT" -ge 70 ]; then DAY_COLOR="$YELLOW"

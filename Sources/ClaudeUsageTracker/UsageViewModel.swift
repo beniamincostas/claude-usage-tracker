@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import UserNotifications
 import AppKit  // for NSWorkspace.shared.runningApplications
+import os.log
 
 @MainActor
 final class UsageViewModel: ObservableObject {
@@ -49,6 +50,8 @@ final class UsageViewModel: ObservableObject {
     private var weekReadings: [PercentageReading] = []
     private static let maxReadings = 20 // keep last 20 readings
     private static let minReadingInterval: TimeInterval = 30 // at least 30s between readings
+
+    private static let log = Logger(subsystem: "com.beniamincostas.ClaudeUsageTracker", category: "UsageViewModel")
 
     private var usageFileWatcher: FileWatcher?
     private var statsFileWatcher: FileWatcher?
@@ -130,7 +133,10 @@ final class UsageViewModel: ObservableObject {
             recordPercentageReading()
             wakeAPIPolling() // CLI activity detected → wake up API polling
         } catch {
-            // Keep previous state on parse error
+            // Keep previous state on parse error — surface to os_log so a half-written
+            // monthly_usage.json (statusline.sh crash, atomic-rename race) is visible
+            // instead of silently freezing the UI on stale data.
+            Self.log.error("Failed to decode monthly_usage.json at \(Self.usageFilePath, privacy: .public): \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -139,7 +145,7 @@ final class UsageViewModel: ObservableObject {
         do {
             statsCache = try JSONDecoder().decode(StatsCache.self, from: data)
         } catch {
-            // Keep previous state on parse error
+            Self.log.error("Failed to decode stats cache at \(Self.statsCachePath, privacy: .public): \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -218,6 +224,11 @@ final class UsageViewModel: ObservableObject {
         }
     }
 
+    // Both `apiPollingLoop` and `fetchAPIUsage` mutate `@Published` properties on
+    // `self`, so they must run on the main actor. The enclosing class is already
+    // `@MainActor`, but we annotate explicitly so the contract survives any future
+    // call site moving off the main actor.
+    @MainActor
     private func apiPollingLoop() async {
         while !Task.isCancelled {
             await fetchAPIUsage()
@@ -229,10 +240,11 @@ final class UsageViewModel: ObservableObject {
             let sleepInterval = max(15, baseInterval + jitter)
             try? await Task.sleep(for: .seconds(sleepInterval))
         }
-        // If we ever exit (cancellation), clear the reference on MainActor
-        await MainActor.run { self.apiPollingTask = nil }
+        // Already on the main actor — no MainActor.run hop needed.
+        self.apiPollingTask = nil
     }
 
+    @MainActor
     private func fetchAPIUsage() async {
         let result = await apiClient.fetchUsage()
         switch result {
@@ -336,8 +348,11 @@ final class UsageViewModel: ObservableObject {
                 )
                 changed = true
             }
-        } else if extraTokenSnapshots.fiveHour != nil && apiUsage != nil {
-            // Only clear when API data is authoritative — avoid spurious reset on stale data
+        } else if extraTokenSnapshots.fiveHour != nil && isAPIDataFresh {
+            // Only clear when API data is authoritative AND fresh — avoid spurious
+            // reset on stale data. Without the freshness gate, a user whose API
+            // token expires while above 100% would have the snapshot pinned forever
+            // because `apiUsage != nil` no longer implies the value is current.
             extraTokenSnapshots.fiveHour = nil
             changed = true
         }
@@ -352,7 +367,7 @@ final class UsageViewModel: ObservableObject {
                 )
                 changed = true
             }
-        } else if extraTokenSnapshots.sevenDay != nil && apiUsage != nil {
+        } else if extraTokenSnapshots.sevenDay != nil && isAPIDataFresh {
             extraTokenSnapshots.sevenDay = nil
             changed = true
         }
@@ -377,8 +392,10 @@ final class UsageViewModel: ObservableObject {
         if let pct = fiveHourPercentage, pct.value < 100 {
             if fiveHourReadings.last.map({ now.timeIntervalSince($0.timestamp) >= Self.minReadingInterval }) ?? true {
                 fiveHourReadings.append(PercentageReading(value: pct.value, timestamp: now))
+                // suffix(_:) is bounds-safe whether count <, ==, or > maxReadings,
+                // unlike removeFirst(_:) which traps when n > count.
                 if fiveHourReadings.count > Self.maxReadings {
-                    fiveHourReadings.removeFirst(fiveHourReadings.count - Self.maxReadings)
+                    fiveHourReadings = Array(fiveHourReadings.suffix(Self.maxReadings))
                 }
             }
         } else {
@@ -389,7 +406,7 @@ final class UsageViewModel: ObservableObject {
             if weekReadings.last.map({ now.timeIntervalSince($0.timestamp) >= Self.minReadingInterval }) ?? true {
                 weekReadings.append(PercentageReading(value: pct.value, timestamp: now))
                 if weekReadings.count > Self.maxReadings {
-                    weekReadings.removeFirst(weekReadings.count - Self.maxReadings)
+                    weekReadings = Array(weekReadings.suffix(Self.maxReadings))
                 }
             }
         } else {
@@ -784,16 +801,19 @@ final class UsageViewModel: ObservableObject {
         }
 
         let thresholds: [(Double, String)] = [(100, "100%"), (95, "95%"), (90, "90%")]
+        var alreadyNotified = false
         for (threshold, label) in thresholds {
             let key = "\(bucket)_\(Int(threshold))"
             if value >= threshold && !notifiedThresholds.contains(key) {
                 notifiedThresholds.insert(key)
                 changed = true
-                sendNotification(
-                    title: "Claude Usage Alert",
-                    body: "\(bucket == "5h" ? "5-hour" : "7-day") usage at \(label) — \(countdown)"
-                )
-                break
+                if !alreadyNotified {
+                    sendNotification(
+                        title: "Claude Usage Alert",
+                        body: "\(bucket == "5h" ? "5-hour" : "7-day") usage at \(label) — \(countdown)"
+                    )
+                    alreadyNotified = true
+                }
             }
         }
         if changed { persistNotifiedThresholds() }

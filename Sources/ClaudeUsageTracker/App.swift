@@ -47,6 +47,19 @@ struct ClaudeUsageTrackerApp: App {
             }
         } label: {
             MenuBarLabel(viewModel: viewModel)
+                // Reconnect OAuth on first label render after launch. `.onChange` below
+                // only fires on transitions, so a user who started the app with
+                // `authMethod = oauth` already persisted would otherwise be left
+                // with a UsageAPIClient that has no OAuthManager handle and falls
+                // back to the (empty) "Claude Code-credentials" keychain item —
+                // producing the "Waiting for Claude Code" hint indefinitely.
+                // The label view is materialised immediately at scene setup, before
+                // the popover is opened, so this runs at launch.
+                .task {
+                    if authMethod == "oauth" && oauthManager.isAuthenticated {
+                        viewModel.connectOAuth(oauthManager)
+                    }
+                }
         }
         .menuBarExtraStyle(.window)
         .onChange(of: oauthManager.isAuthenticated) { authenticated in
