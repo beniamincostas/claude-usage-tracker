@@ -66,10 +66,14 @@ final class FileWatcher {
         dispatchSource = source
     }
 
-    /// Fallback: GCD timer that fires even when RunLoop-based timers are throttled
+    /// Fallback: GCD timer that catches changes the dispatch source might miss
+    /// (e.g. an event coalesced during heavy churn). The dispatch source is the
+    /// primary, instant path — including atomic-rename re-arm — so this only needs
+    /// to be a coarse safety net. 30s (was 5s) cuts idle wakeups ~6× and lets the
+    /// process nap, with generous leeway so the scheduler can batch it. (#C1)
     private func startFallbackTimer() {
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 5, repeating: 5.0, leeway: .seconds(1))
+        timer.schedule(deadline: .now() + 30, repeating: 30.0, leeway: .seconds(10))
         timer.setEventHandler { [weak self] in
             self?.handleFileChange()
         }

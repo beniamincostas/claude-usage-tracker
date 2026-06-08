@@ -45,6 +45,7 @@ input=$(cat)
   IFS= read -r DAY_RESETS
   IFS= read -r WEEK_PCT_RAW
   IFS= read -r WEEK_RESETS
+  IFS= read -r EFFORT
 } < <(printf '%s' "$input" | jq -r '
   (.model.display_name // ""),
   (.model.id // "unknown"),
@@ -62,7 +63,8 @@ input=$(cat)
   (.rate_limits.five_hour.used_percentage // ""),
   (.rate_limits.five_hour.resets_at | if . == null then "" else tostring end),
   (.rate_limits.seven_day.used_percentage // ""),
-  (.rate_limits.seven_day.resets_at | if . == null then "" else tostring end)
+  (.rate_limits.seven_day.resets_at | if . == null then "" else tostring end),
+  (.effort.level // "")
 ')
 
 # Convert ISO 8601 resets_at to epoch seconds (handles both epoch ints and ISO strings)
@@ -101,6 +103,9 @@ CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; BLUE='\033
 # --- helper: build a 10-char bar from an integer percentage ---
 make_bar() {
   local pct=$1
+  # Defensive: coerce empty/non-numeric input to 0 so the integer tests below
+  # don't abort with "integer expression expected" (#B1).
+  [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
   [ "$pct" -gt 100 ] && pct=100
   local filled=$((pct / 10))
   local empty=$((10 - filled))
@@ -130,12 +135,18 @@ _lock_attempts=0
 while ! mkdir "$USAGE_LOCK" 2>/dev/null; do
   _lock_attempts=$((_lock_attempts + 1))
   if [ "$_lock_attempts" -ge 20 ]; then
-    # Stale lock? Remove if older than 10 seconds
+    # Stale lock? Remove only if we can read a valid mtime AND it's genuinely old.
+    # A failed `stat` previously fell back to 0, making the age look enormous and
+    # deleting a *live* lock held by a concurrent statusline — exactly the write
+    # race the lock exists to prevent (#B2). Now: no valid mtime → leave it alone.
     if [ -d "$USAGE_LOCK" ]; then
-      _lock_age=$(( $(date +%s) - $(stat -f %m "$USAGE_LOCK" 2>/dev/null || echo 0) ))
-      if [ "$_lock_age" -gt 10 ]; then
-        rmdir "$USAGE_LOCK" 2>/dev/null
-        mkdir "$USAGE_LOCK" 2>/dev/null && break
+      _lock_mtime=$(stat -f %m "$USAGE_LOCK" 2>/dev/null)
+      if [[ "$_lock_mtime" =~ ^[0-9]+$ ]]; then
+        _lock_age=$(( $(date +%s) - _lock_mtime ))
+        if [ "$_lock_age" -gt 10 ]; then
+          rmdir "$USAGE_LOCK" 2>/dev/null
+          mkdir "$USAGE_LOCK" 2>/dev/null && break
+        fi
       fi
     fi
     exit 0  # Skip this update rather than risk data corruption
@@ -172,6 +183,8 @@ CURRENT_DATE=$(date +%Y-%m-%d)
   IFS= read -r SESS_PREV_CACHE_WRITE
   IFS= read -r SESS_PREV_CACHE_READ
   IFS= read -r SESS_LOG_MODEL
+  IFS= read -r SESS_CUM_IN
+  IFS= read -r SESS_CUM_OUT
 } < <(printf '%s' "$LOG" | jq -r --arg sid "$SESSION_ID" '
   (.billing_month // ""),
   (.week_resets_at // 0 | tostring),
@@ -189,13 +202,66 @@ CURRENT_DATE=$(date +%Y-%m-%d)
   (.sessions[$sid].output_tokens // 0 | tostring),
   (.sessions[$sid].cache_write_tokens // 0 | tostring),
   (.sessions[$sid].cache_read_tokens // 0 | tostring),
-  (.sessions[$sid].model // "")
+  (.sessions[$sid].model // ""),
+  (.sessions[$sid].cum_input_tokens // 0 | tostring),
+  (.sessions[$sid].cum_output_tokens // 0 | tostring)
 ')
 
-# If the model changed mid-session, set baseline to current totals so DELTA=0.
-# Only genuinely new tokens after the switch will flow into the new model.
-# The old model's counters remain correct (they captured everything up to the switch).
+# If the model changed mid-session, attribute the tokens consumed since the last
+# render to the OLD model before re-baselining (#B3). Previously this delta was
+# discarded entirely (baseline jumped to current totals, DELTA=0), undercounting
+# BOTH the period totals (month/week/day — model-agnostic) AND the old model's
+# per-model breakdown. The fix credits the pre-switch delta to:
+#   1. the old model's per-model counters (via the jq merge below), and
+#   2. the period counters (via PERIOD_PRESWITCH_* added before the main DELTA),
+# then re-baselines SESS_PREV_* so the new model's own DELTA starts at zero and
+# does NOT also receive these tokens (which would double-count per-model).
+PERIOD_PRESWITCH_IN=0
+PERIOD_PRESWITCH_OUT=0
 if [ -n "$SESS_LOG_MODEL" ] && [ "$SESS_LOG_MODEL" != "$MODEL_ID" ]; then
+  PRESWITCH_IN=$(( TOTAL_IN - SESS_PREV_IN ))
+  PRESWITCH_OUT=$(( TOTAL_OUT - SESS_PREV_OUT ))
+  PRESWITCH_CW=$(( CACHE_WRITE - SESS_PREV_CACHE_WRITE ))
+  PRESWITCH_CR=$(( CACHE_READ - SESS_PREV_CACHE_READ ))
+  [ "$PRESWITCH_IN" -lt 0 ] && PRESWITCH_IN=0
+  [ "$PRESWITCH_OUT" -lt 0 ] && PRESWITCH_OUT=0
+  [ "$PRESWITCH_CW" -lt 0 ] && PRESWITCH_CW=0
+  [ "$PRESWITCH_CR" -lt 0 ] && PRESWITCH_CR=0
+
+  # Period totals only track input/output (see MONTH_IN/MONTH_OUT etc. below),
+  # so carry the input/output pre-switch delta forward to the period accumulation.
+  PERIOD_PRESWITCH_IN=$PRESWITCH_IN
+  PERIOD_PRESWITCH_OUT=$PRESWITCH_OUT
+
+  # Credit the old model's per-model counters (incl. cache) with the pre-switch delta.
+  if [ "$PRESWITCH_IN" -gt 0 ] || [ "$PRESWITCH_OUT" -gt 0 ] || [ "$PRESWITCH_CW" -gt 0 ] || [ "$PRESWITCH_CR" -gt 0 ]; then
+    LOG=$(printf '%s' "$LOG" | jq \
+      --arg fm "$SESS_LOG_MODEL" \
+      --argjson din "$PRESWITCH_IN" --argjson dout "$PRESWITCH_OUT" \
+      --argjson dcw "$PRESWITCH_CW" --argjson dcr "$PRESWITCH_CR" '
+      .models = (.models // {}) |
+      .models[$fm] = ((.models[$fm] // {}) | {
+        month_input_tokens:         ((.month_input_tokens // 0) + $din),
+        month_output_tokens:        ((.month_output_tokens // 0) + $dout),
+        week_input_tokens:          ((.week_input_tokens // 0) + $din),
+        week_output_tokens:         ((.week_output_tokens // 0) + $dout),
+        day_input_tokens:           ((.day_input_tokens // 0) + $din),
+        day_output_tokens:          ((.day_output_tokens // 0) + $dout),
+        cal_day_input_tokens:       ((.cal_day_input_tokens // 0) + $din),
+        cal_day_output_tokens:      ((.cal_day_output_tokens // 0) + $dout),
+        month_cache_write_tokens:   ((.month_cache_write_tokens // 0) + $dcw),
+        month_cache_read_tokens:    ((.month_cache_read_tokens // 0) + $dcr),
+        week_cache_write_tokens:    ((.week_cache_write_tokens // 0) + $dcw),
+        week_cache_read_tokens:     ((.week_cache_read_tokens // 0) + $dcr),
+        day_cache_write_tokens:     ((.day_cache_write_tokens // 0) + $dcw),
+        day_cache_read_tokens:      ((.day_cache_read_tokens // 0) + $dcr),
+        cal_day_cache_write_tokens: ((.cal_day_cache_write_tokens // 0) + $dcw),
+        cal_day_cache_read_tokens:  ((.cal_day_cache_read_tokens // 0) + $dcr)
+      })
+    ')
+  fi
+
+  # Re-baseline so the NEW model's own DELTA (computed below) starts at zero.
   SESS_PREV_IN=$TOTAL_IN
   SESS_PREV_OUT=$TOTAL_OUT
   SESS_PREV_CACHE_WRITE=$CACHE_WRITE
@@ -292,14 +358,25 @@ DELTA_CACHE_READ=$(( CACHE_READ - SESS_PREV_CACHE_READ ))
 [ "$DELTA_CACHE_WRITE" -lt 0 ] && DELTA_CACHE_WRITE=0
 [ "$DELTA_CACHE_READ"  -lt 0 ] && DELTA_CACHE_READ=0
 
-MONTH_IN=$(( MONTH_IN  + DELTA_IN  ))
-MONTH_OUT=$(( MONTH_OUT + DELTA_OUT ))
-WEEK_IN=$(( WEEK_IN   + DELTA_IN  ))
-WEEK_OUT=$(( WEEK_OUT  + DELTA_OUT ))
-DAY_IN=$(( DAY_IN    + DELTA_IN  ))
-DAY_OUT=$(( DAY_OUT   + DELTA_OUT ))
-CAL_DAY_IN=$(( CAL_DAY_IN  + DELTA_IN  ))
-CAL_DAY_OUT=$(( CAL_DAY_OUT + DELTA_OUT ))
+# Period totals receive the new model's delta PLUS any pre-switch delta that was
+# re-baselined out of DELTA_IN/OUT above (#B3). PERIOD_PRESWITCH_* is 0 on normal
+# renders, so this is a no-op except on the exact render where the model switched.
+MONTH_IN=$(( MONTH_IN  + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
+MONTH_OUT=$(( MONTH_OUT + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
+WEEK_IN=$(( WEEK_IN   + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
+WEEK_OUT=$(( WEEK_OUT  + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
+DAY_IN=$(( DAY_IN    + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
+DAY_OUT=$(( DAY_OUT   + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
+CAL_DAY_IN=$(( CAL_DAY_IN  + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
+CAL_DAY_OUT=$(( CAL_DAY_OUT + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
+
+# Per-session cumulative in/out — a never-resetting running total built from the
+# same clamped deltas as the period counters. The raw context_window totals
+# (TOTAL_IN/TOTAL_OUT) reflect *current window occupancy* and legitimately fall on
+# compaction / subagent turns, which made the top-line "📥 in 📤 out" jump up and
+# down. This counter only ever increases, so the headline tracks tokens consumed.
+SESS_CUM_IN=$(( SESS_CUM_IN  + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
+SESS_CUM_OUT=$(( SESS_CUM_OUT + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
 
 # Read all per-model accumulated values in one jq call
 {
@@ -377,6 +454,8 @@ jq -n \
   --argjson sess_out           "$TOTAL_OUT" \
   --argjson sess_cw            "$CACHE_WRITE" \
   --argjson sess_cr            "$CACHE_READ" \
+  --argjson sess_cum_in        "$SESS_CUM_IN" \
+  --argjson sess_cum_out       "$SESS_CUM_OUT" \
   --argjson model_month_in     "$MODEL_MONTH_IN" \
   --argjson model_month_out    "$MODEL_MONTH_OUT" \
   --argjson model_week_in      "$MODEL_WEEK_IN" \
@@ -438,7 +517,7 @@ jq -n \
     ),
     sessions: (
       (($existing.sessions // {}) + {
-        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr}
+        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr, cum_input_tokens: $sess_cum_in, cum_output_tokens: $sess_cum_out}
       })
       # Prune sessions: remove zero-token entries, keep last 50, but always preserve current session.
       | to_entries
@@ -615,6 +694,7 @@ model_breakdown_lines() {
 # Format helpers — only formats needed for displayed rows (5h, 7d)
 # -----------------------------------------------------------------------
 TOTAL_IN_FMT=$(fmt_tokens "$TOTAL_IN");   TOTAL_OUT_FMT=$(fmt_tokens "$TOTAL_OUT")
+SESS_CUM_IN_FMT=$(fmt_tokens "$SESS_CUM_IN"); SESS_CUM_OUT_FMT=$(fmt_tokens "$SESS_CUM_OUT")
 DAY_IN_FMT=$(fmt_tokens   "$DAY_IN");    DAY_OUT_FMT=$(fmt_tokens   "$DAY_OUT");    DAY_TOTAL_FMT=$(fmt_tokens "$((DAY_IN + DAY_OUT))")
 WEEK_IN_FMT=$(fmt_tokens  "$WEEK_IN");   WEEK_OUT_FMT=$(fmt_tokens  "$WEEK_OUT");   WEEK_TOTAL_FMT=$(fmt_tokens "$((WEEK_IN + WEEK_OUT))")
 
@@ -639,6 +719,19 @@ DISPLAY_BRANCH="${WORKTREE_BRANCH:-$GIT_BRANCH}"
 
 # --- 1. Session free-form line (above the table) ---
 printf '%b' "${CYAN}[${MODEL}]${RESET}"
+# Reasoning effort (.effort.level). Absent when the current model has no effort
+# parameter; reflects live /effort changes. Ultracode reports as "xhigh".
+if [ -n "$EFFORT" ]; then
+  case "$EFFORT" in
+    low)    EFF_COLOR="$BLUE"    ;;
+    medium) EFF_COLOR="$GREEN"   ;;
+    high)   EFF_COLOR="$YELLOW"  ;;
+    xhigh)  EFF_COLOR="$MAGENTA" ;;
+    max)    EFF_COLOR="$RED"     ;;
+    *)      EFF_COLOR="$RESET"   ;;
+  esac
+  printf '%b' " $(colorize "$EFF_COLOR" "🧠 ${EFFORT}")"
+fi
 # Agent label
 [ -n "$AGENT_NAME" ] && printf '%b' " ${MAGENTA}(${AGENT_NAME})${RESET}"
 # Vim mode
@@ -652,7 +745,7 @@ fi
 # Git / worktree branch
 [ -n "$DISPLAY_BRANCH" ] && printf '%b' " | 🌿 ${DISPLAY_BRANCH}"
 printf '%b' " | $(colorize "$CTX_COLOR" "${CTX_BAR}") ${CTX_PCT}%"
-printf '%b' " | 📥 ${TOTAL_IN_FMT} 📤 ${TOTAL_OUT_FMT}\n"
+printf '%b' " | 📥 ${SESS_CUM_IN_FMT} 📤 ${SESS_CUM_OUT_FMT}\n"
 
 # --- 2. Table header ---
 # left area: label(9) + sp(1) + bar(10) + sp(1) + pct(4) = 25 chars, matching data rows

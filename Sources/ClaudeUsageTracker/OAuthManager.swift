@@ -188,6 +188,10 @@ final class OAuthManager: ObservableObject {
                         return nil
                     }
                 }
+                // Recovered — clear any prior transient reason (keychainLocked /
+                // networkError) so a stale value can't later masquerade as the cause
+                // of an unrelated 401 in UsageViewModel's status handling.
+                logoutReason = nil
                 return tokens.accessToken
             } catch {
                 // #5: Catch all errors (including CancellationError), not just NSError
@@ -207,6 +211,9 @@ final class OAuthManager: ObservableObject {
             }
         }
 
+        // Valid unexpired token in hand — clear any prior transient reason so the
+        // UI doesn't keep reporting a keychain-locked / network state after recovery.
+        logoutReason = nil
         return token
     }
 
@@ -274,8 +281,17 @@ final class OAuthManager: ObservableObject {
             ])
         }
 
-        let newRefreshToken = (json["refresh_token"] as? String).flatMap({ $0.isEmpty ? nil : $0 })
-            ?? loadRefreshToken() ?? ""
+        // Prefer the server's refresh token; fall back to the stored one if the
+        // response omits it (some refresh grants don't rotate it). If neither is
+        // available, throw rather than persisting an empty string — an empty
+        // refresh token would be saved and then trip the `!rt.isEmpty` guard on the
+        // next refresh, turning a transient server quirk into a forced logout (#B5).
+        let serverRefresh = (json["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        guard let newRefreshToken = serverRefresh ?? loadRefreshToken(), !newRefreshToken.isEmpty else {
+            throw NSError(domain: "OAuthError", code: -3, userInfo: [
+                NSLocalizedDescriptionKey: "Token response had no refresh token and none was stored"
+            ])
+        }
         let expiresIn = json["expires_in"] as? Double ?? 3600
 
         return TokenResponse(accessToken: accessToken, refreshToken: newRefreshToken,

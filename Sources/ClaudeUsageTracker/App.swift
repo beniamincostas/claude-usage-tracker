@@ -29,6 +29,8 @@ struct ClaudeUsageTrackerApp: App {
             return "No saved login found. Please authenticate."
         case "networkError":
             return "Cannot reach Anthropic. Check your connection and try again."
+        case "keychainLocked":
+            return "Keychain is locked. Unlock your Mac to resume usage tracking."
         default:
             return nil
         }
