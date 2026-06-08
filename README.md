@@ -2,13 +2,13 @@
 
 macOS menu bar app for real-time Claude Code usage monitoring. Shows 5-hour window, 7-day, daily, and monthly usage with alerts at 90% / 95% / 100% thresholds.
 
-**Latest:** v2.0.2 · macOS 13+ (Apple Silicon) · ~2 MB · MIT
+**Latest:** v2.0.3 · macOS 13+ (Apple Silicon) · ~2 MB · MIT
 
-[Download v2.0.2](https://github.com/beniamincostas/claude-usage-tracker/releases/latest) · [Changelog](CHANGELOG.md)
+[Download v2.0.3](https://github.com/beniamincostas/claude-usage-tracker/releases/latest) · [Changelog](CHANGELOG.md)
 
 ## Install
 
-1. Download `ClaudeUsageTracker-v2.0.2.dmg` from [the latest release](https://github.com/beniamincostas/claude-usage-tracker/releases/latest)
+1. Download `ClaudeUsageTracker-v2.0.3.dmg` from [the latest release](https://github.com/beniamincostas/claude-usage-tracker/releases/latest)
 2. Open the DMG
 3. Open Terminal and run:
 

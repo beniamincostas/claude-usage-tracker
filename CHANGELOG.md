@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.0.3 (2026-06-08)
+
+Bug-fix and statusline-accuracy release. No breaking changes.
+
+### Fixes
+- **Duplicate concurrent API polling fixed** — a `stopAndReset()` + `start()` cycle (e.g. OAuth reconnect) let the cancelled old polling loop's deferred cleanup clobber the new loop's task handle, producing two loops polling the API in parallel (faster rate-limiting) and a possible parked-sleep hang. Loop teardown is now generation-guarded, so a superseded loop no longer touches shared state.
+- **Stale logout reason cleared on recovery** — a transient `keychainLocked`/`networkError` reason persisted indefinitely and could later surface a misleading "Keychain locked" message on an unrelated 401. It's now cleared on successful token retrieval.
+
+### Statusline
+- **In/out tokens no longer jump up and down** — the headline `📥/📤` now shows monotonic per-session cumulative totals instead of the raw `context_window` occupancy (which legitimately falls on compaction and subagent turns).
+- **Clean token separation** — `📥 IN` is base input only (cache excluded; `total_input_tokens` is cache-inclusive, so cache is subtracted), `📤 OUT` is output only, and cache is broken out separately as dimmed `✍️ CacheW` / `📖 CacheR`. Each is its own independent per-session cumulative, decoupled from the period/model rebaselining so it never resets mid-session.
+- **Reasoning effort shown** — `.effort.level` (low/medium/high/xhigh/max) rendered with a 🧠 badge on the session line.
+- **Lock + bar hardening** — stale-lock removal no longer deletes a live lock when `stat` can't read an mtime; `make_bar` coerces empty/non-numeric input to 0; mid-session model switches now attribute the pre-switch delta to the old model instead of discarding it.
+
+### App
+- **Current Session panel aligned** — reads the same cumulative base/out/cache figures as the CLI statusline (display-only; no stored history is altered). Period panels (5h/7d/month) are unchanged.
+
 ## v2.0.2 (2026-05-18)
 
 Bug-fix and hardening release. No new features, no breaking changes. Internal code review found 12 high-confidence issues across OAuth, the usage view model, and the statusline shell script. All fixed. Plus one user-facing bug discovered during smoke-testing.
