@@ -5,7 +5,7 @@ import AppKit
 actor UpdateChecker {
     private static let owner = "beniamincostas"
     private static let repo = "claude-usage-tracker"
-    static let currentVersion = "2.0.2"
+    static let currentVersion = "2.0.3"
 
     struct Release: Decodable {
         let tag_name: String

@@ -31,15 +31,33 @@ final class UsageViewModel: ObservableObject {
     }
 
     private var apiClient = UsageAPIClient()
+    // Weak handle to the OAuth manager (when authed via OAuth) so failure handling
+    // can distinguish a transient keychain-locked state from a real auth failure.
+    private weak var oauthManager: OAuthManager?
     private var apiPollingTask: Task<Void, Never>?
-    private var pollInterval: TimeInterval = 120          // base: 2 min between API calls (active)
+    // Bumped each time a polling loop is launched. A loop only tears down shared
+    // state (apiPollingTask / sleepWakeContinuation) if it still owns the current
+    // generation — otherwise a stopAndReset()+start() cycle (e.g. connectOAuth)
+    // would let the cancelled old loop's deferred cleanup clobber the new loop's
+    // task handle (→ duplicate concurrent polling) and orphan its parked sleep.
+    private var pollingGeneration = 0
+    private static let activePollInterval: TimeInterval = 60   // base: 1 min between API calls (active)
+    private var pollInterval: TimeInterval = activePollInterval
     private let idlePollInterval: TimeInterval = 300      // 5 min between API calls (idle)
     private let cooldownThreshold: TimeInterval = 300     // 5 min after last activity → switch to idle rate
+    private let activityWindow: TimeInterval = 300        // file mtime/process age that still counts as "active" (matches cooldown)
     private let staleDataThreshold: TimeInterval = 900    // 15 min — drop API data if no successful fetch
     private let apiBackoffCap: TimeInterval = 900         // max backoff for rate limiting
     private var lastActivityTime: Date = .distantPast     // when Claude was last used
     private var lastAPISuccessTime: Date?                 // when API last returned 200
+    private var lastFileUpdateTime: Date?                 // when monthly_usage.json was last successfully decoded
     private var extraTokenSnapshots: ExtraTokenSnapshots
+
+    // Wake signal: a wake (CLI/file/process activity) resumes any continuation the
+    // poll loop is parked on, interrupting the in-flight sleep so the next fetch
+    // happens immediately instead of after the remaining poll interval.
+    private var sleepWakeContinuation: CheckedContinuation<Void, Never>?
+    private var wakePending = false   // set if a wake arrives while the loop is mid-fetch (not yet parked)
 
     // Velocity tracking: store recent percentage readings to estimate time-to-limit
     private struct PercentageReading {
@@ -86,6 +104,7 @@ final class UsageViewModel: ObservableObject {
     /// Connect with OAuthManager — replaces Keychain-based token reading.
     func connectOAuth(_ manager: OAuthManager) {
         stopAndReset()  // #7: cancel old polling before switching token source
+        oauthManager = manager
         apiClient = UsageAPIClient(oauthManager: manager)
         start()
     }
@@ -94,6 +113,10 @@ final class UsageViewModel: ObservableObject {
     func stopAndReset() {
         apiPollingTask?.cancel()
         apiPollingTask = nil
+        // Resume any parked sleep so the cancelled loop unblocks and exits cleanly.
+        sleepWakeContinuation?.resume()
+        sleepWakeContinuation = nil
+        wakePending = false
         countdownTimer?.cancel()
         countdownTimer = nil
         usageFileWatcher?.stop()
@@ -101,6 +124,7 @@ final class UsageViewModel: ObservableObject {
         statsFileWatcher?.stop()
         statsFileWatcher = nil
         apiClient = UsageAPIClient()
+        oauthManager = nil
         apiUsage = nil
         apiDataSource = .fileOnly
     }
@@ -128,6 +152,7 @@ final class UsageViewModel: ObservableObject {
         do {
             usage = try JSONDecoder().decode(MonthlyUsage.self, from: data)
             lastUpdated = .now
+            lastFileUpdateTime = .now
             checkAndNotify()
             updateExtraTokenTracking()
             recordPercentageReading()
@@ -168,9 +193,13 @@ final class UsageViewModel: ObservableObject {
     private var lastCountdownText: String = ""
 
     private func setupCountdownTimer() {
-        // GCD timer — fires reliably even when menu bar app is in background
+        // GCD timer — fires reliably even when menu bar app is in background.
+        // 15s (was 10s) with wider leeway lets the scheduler batch wakeups and the
+        // process nap longer; countdowns change at minute granularity so this is
+        // imperceptible, and live CLI activity still wakes polling instantly via
+        // FileWatcher rather than relying on this tick. (#C2)
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 10, repeating: 10.0, leeway: .seconds(2))
+        timer.schedule(deadline: .now() + 15, repeating: 15.0, leeway: .seconds(5))
         timer.setEventHandler { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -205,23 +234,78 @@ final class UsageViewModel: ObservableObject {
 
     private func startAPIPolling() {
         guard apiPollingTask == nil else { return }
+        launchPollingLoop()
+    }
+
+    /// Single point that creates the polling task, bumping the generation so the
+    /// loop can detect if it has been superseded before tearing down shared state.
+    private func launchPollingLoop() {
+        pollingGeneration &+= 1
+        let generation = pollingGeneration
         apiPollingTask = Task {
-            await self.apiPollingLoop()
+            await self.apiPollingLoop(generation: generation)
         }
     }
 
     /// Wake up API polling — called when Claude activity is detected.
-    /// Updates lastActivityTime so the loop uses the faster active interval.
+    /// Updates lastActivityTime so the loop uses the faster active interval, and
+    /// interrupts any in-flight sleep so a fresh fetch happens immediately rather
+    /// than after the remaining poll interval (up to 60s/300s of dead wait).
     func wakeAPIPolling() {
         // #2: Allow both OAuth and Keychain users to wake polling
         guard Self.hasConsent || UserDefaults.standard.string(forKey: "authMethod") == "oauth" else { return }
         lastActivityTime = .now
+
         // Restart loop if it was cancelled (shouldn't happen, but safety net)
         if apiPollingTask == nil {
-            apiPollingTask = Task {
-                await self.apiPollingLoop()
+            launchPollingLoop()
+            return
+        }
+
+        // Interrupt the parked sleep so the loop fetches now. If the loop is
+        // mid-fetch (no continuation parked), flag wakePending so it skips its
+        // next sleep instead of waiting out a full interval.
+        if let continuation = sleepWakeContinuation {
+            sleepWakeContinuation = nil
+            continuation.resume()
+        } else {
+            wakePending = true
+        }
+    }
+
+    /// Sleep for `seconds`, but return early if `wakeAPIPolling()` fires.
+    /// Returns when either the deadline elapses or a wake interrupts it.
+    private func interruptibleSleep(seconds: TimeInterval) async {
+        // A wake arrived while we were fetching — consume it and don't sleep.
+        if wakePending {
+            wakePending = false
+            return
+        }
+
+        // Park on a continuation that wakeAPIPolling() can resume early.
+        let timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self else { return }
+            // Explicit hop back to the main actor to resume the parked sleep.
+            await MainActor.run { self.resumeSleepWake() }
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            // If a wake snuck in between the wakePending check and here, resume now.
+            if wakePending {
+                wakePending = false
+                continuation.resume()
+            } else {
+                sleepWakeContinuation = continuation
             }
         }
+        timeoutTask.cancel()
+    }
+
+    /// Resume the parked sleep continuation if present (called by the timeout task).
+    private func resumeSleepWake() {
+        guard let continuation = sleepWakeContinuation else { return }
+        sleepWakeContinuation = nil
+        continuation.resume()
     }
 
     // Both `apiPollingLoop` and `fetchAPIUsage` mutate `@Published` properties on
@@ -229,7 +313,7 @@ final class UsageViewModel: ObservableObject {
     // `@MainActor`, but we annotate explicitly so the contract survives any future
     // call site moving off the main actor.
     @MainActor
-    private func apiPollingLoop() async {
+    private func apiPollingLoop(generation: Int) async {
         while !Task.isCancelled {
             await fetchAPIUsage()
 
@@ -238,9 +322,19 @@ final class UsageViewModel: ObservableObject {
             let baseInterval = isIdle ? idlePollInterval : pollInterval
             let jitter = Double.random(in: -15...15)
             let sleepInterval = max(15, baseInterval + jitter)
-            try? await Task.sleep(for: .seconds(sleepInterval))
+            // Interruptible: a wake (CLI/file/process activity) cuts this short so
+            // the next fetch is immediate rather than up to `sleepInterval` away.
+            await interruptibleSleep(seconds: sleepInterval)
         }
         // Already on the main actor — no MainActor.run hop needed.
+        // Only clear shared state if no newer loop has superseded us. After a
+        // stopAndReset()+start() cycle the cancelled old loop resumes here *after*
+        // the new loop is already running; clearing unconditionally would drop the
+        // new task handle (duplicate polling on next wake) and orphan its parked
+        // sleep continuation (hang). The generation guard makes this a no-op then.
+        guard generation == pollingGeneration else { return }
+        self.sleepWakeContinuation = nil
+        self.wakePending = false
         self.apiPollingTask = nil
     }
 
@@ -253,7 +347,7 @@ final class UsageViewModel: ObservableObject {
             apiDataSource = .api
             lastAPISuccessTime = .now
             lastUpdated = .now
-            pollInterval = 120
+            pollInterval = Self.activePollInterval
             statusMessage = nil  // Clear any previous error
             recordPercentageReading()
             checkAndNotify()
@@ -261,38 +355,58 @@ final class UsageViewModel: ObservableObject {
         case .failure(let error):
             switch error {
             case .rateLimited(let retryAfter):
+                // Back off from the active baseline, not from whatever a prior
+                // transient (timeout/unauthorized) left in pollInterval — otherwise
+                // the 429 schedule is order-dependent (#B4). Double the larger of the
+                // current value and the active floor, honour any server hint, cap it.
                 let serverSuggestion = retryAfter ?? 0
-                pollInterval = min(max(pollInterval * 2, serverSuggestion), apiBackoffCap)
+                let base = max(pollInterval, Self.activePollInterval)
+                pollInterval = min(max(base * 2, serverSuggestion), apiBackoffCap)
                 // Silent — orange dot is enough
             case .unauthorized:
                 let isOAuth = UserDefaults.standard.string(forKey: "authMethod") == "oauth"
                 if isOAuth {
-                    statusMessage = nil  // OAuth refresh handles it, logout triggers auth screen
+                    // OAuth refresh handles a genuine 401; a Keychain-locked state
+                    // (sleep/wake) surfaces here too, so reflect that transient
+                    // condition instead of clearing the message silently (#B6).
+                    statusMessage = oauthManager?.logoutReason == "keychainLocked"
+                        ? "Keychain locked — unlock your Mac to resume usage updates"
+                        : nil
                 } else {
                     statusMessage = "Token expired — run any prompt in Claude Code to refresh, or switch to OAuth"
                 }
-                pollInterval = 300
+                pollInterval = idlePollInterval
             case .noToken:
                 let isOAuth = UserDefaults.standard.string(forKey: "authMethod") == "oauth"
-                if !isOAuth {
+                if isOAuth {
+                    if oauthManager?.logoutReason == "keychainLocked" {
+                        statusMessage = "Keychain locked — unlock your Mac to resume usage updates"
+                    }
+                    // Other OAuth noToken cases are handled by OAuthManager.logout()
+                } else {
                     statusMessage = "Waiting for Claude Code — run 'claude' in Terminal to log in"
                 }
-                // OAuth noToken is handled by OAuthManager.logout()
             case .timeout:
+                // Retry sooner than the active interval, but never below the loop's
+                // 15s floor. Absolute assignment is fine here because the 429 branch
+                // no longer reads pollInterval as its sole base (#B4).
                 pollInterval = 30
             default:
                 break
             }
 
-            // Preserve last good data — only drop after staleDataThreshold of consecutive failures
-            if let lastSuccess = lastAPISuccessTime,
-               Date.now.timeIntervalSince(lastSuccess) > staleDataThreshold {
-                apiUsage = nil
-                apiDataSource = .fileOnly
+            // Preserve last good data — only drop after staleDataThreshold of
+            // consecutive failures. Guard assignments so we don't emit redundant
+            // objectWillChange on every failure tick (#B7).
+            let shouldDrop: Bool
+            if let lastSuccess = lastAPISuccessTime {
+                shouldDrop = Date.now.timeIntervalSince(lastSuccess) > staleDataThreshold
+            } else {
+                shouldDrop = true  // never succeeded → stay in fileOnly
             }
-            // If we never succeeded, stay in fileOnly
-            if lastAPISuccessTime == nil {
-                apiDataSource = .fileOnly
+            if shouldDrop {
+                if apiUsage != nil { apiUsage = nil }
+                if apiDataSource != .fileOnly { apiDataSource = .fileOnly }
             }
         }
     }
@@ -306,10 +420,14 @@ final class UsageViewModel: ObservableObject {
         }) {
             return true
         }
-        // Check if monthly_usage.json was modified recently (within 10 min) — signals active CLI
+        // Check if monthly_usage.json was modified recently — signals active CLI.
+        // Window matches `activityWindow`/`cooldownThreshold` (5 min) so the process
+        // check and the active/idle interval switch agree on what "active" means;
+        // a 10-min window here previously kept waking the loop after it had already
+        // dropped to the idle rate, producing inconsistent latency.
         if let attrs = try? FileManager.default.attributesOfItem(atPath: Self.usageFilePath),
            let mtime = attrs[.modificationDate] as? Date,
-           Date.now.timeIntervalSince(mtime) < 600 {
+           Date.now.timeIntervalSince(mtime) < activityWindow {
             return true
         }
         return false
@@ -456,8 +574,12 @@ final class UsageViewModel: ObservableObject {
         usage?.sessions.count ?? 0
     }
 
+    /// All-time session count from stats-cache. Falls back to 0 (not the live
+    /// `sessionCount`) because that live value is pruned to the last 50 sessions —
+    /// presenting it under the "ALL-TIME" header would understate reality before
+    /// stats-cache.json has loaded (#C5).
     var totalSessionsAllTime: Int {
-        statsCache?.totalSessions ?? sessionCount
+        statsCache?.totalSessions ?? 0
     }
 
     var totalMessagesAllTime: Int {
@@ -466,7 +588,23 @@ final class UsageViewModel: ObservableObject {
 
     // MARK: - Rate Limit Percentages (API first, JSON fallback)
 
+    /// True when monthly_usage.json was decoded more recently than the last
+    /// successful API fetch. The file is written by statusline.sh on every render
+    /// (and surfaced within ms by FileWatcher), so during active sessions it is
+    /// the freshest source — whereas the API has a 60s+ poll floor and its own
+    /// server-side delay. When the file is ahead, prefer its percentage so the
+    /// headline number tracks live activity instead of lagging the slow API path.
+    private var fileIsFresherThanAPI: Bool {
+        guard let fileTime = lastFileUpdateTime else { return false }
+        guard let apiTime = lastAPISuccessTime else { return true }
+        return fileTime > apiTime
+    }
+
     var fiveHourPercentage: RateLimitPercentage? {
+        // Prefer the freshly-written file value when it is ahead of the last API fetch.
+        if fileIsFresherThanAPI, let real = usage?.dayUsedPct {
+            return RateLimitPercentage(value: real, isEstimated: false)
+        }
         if let api = apiUsage?.fiveHour {
             return RateLimitPercentage(value: api.utilization, isEstimated: false)
         }
@@ -475,6 +613,9 @@ final class UsageViewModel: ObservableObject {
     }
 
     var weekPercentage: RateLimitPercentage? {
+        if fileIsFresherThanAPI, let real = usage?.weekUsedPct {
+            return RateLimitPercentage(value: real, isEstimated: false)
+        }
         if let api = apiUsage?.sevenDay {
             return RateLimitPercentage(value: api.utilization, isEstimated: false)
         }

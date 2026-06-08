@@ -106,6 +106,16 @@ struct SessionTokens: Codable {
     let outputTokens: Int
     let cacheWriteTokens: Int?
     let cacheReadTokens: Int?
+    // Monotonic per-session cumulatives written by statusline.sh. Unlike the raw
+    // snapshot fields above (current context-window occupancy, which drops on
+    // compaction), these only ever increase and are already cleanly separated:
+    // cumInput is BASE input (cache excluded). Optional — absent for sessions
+    // written before these fields existed, in which case callers fall back to the
+    // raw snapshot.
+    let cumInputTokens: Int?
+    let cumOutputTokens: Int?
+    let cumCacheWriteTokens: Int?
+    let cumCacheReadTokens: Int?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -113,6 +123,10 @@ struct SessionTokens: Codable {
         case outputTokens = "output_tokens"
         case cacheWriteTokens = "cache_write_tokens"
         case cacheReadTokens = "cache_read_tokens"
+        case cumInputTokens = "cum_input_tokens"
+        case cumOutputTokens = "cum_output_tokens"
+        case cumCacheWriteTokens = "cum_cache_write_tokens"
+        case cumCacheReadTokens = "cum_cache_read_tokens"
     }
 }
 
