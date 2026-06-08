@@ -187,6 +187,10 @@ CURRENT_DATE=$(date +%Y-%m-%d)
   IFS= read -r SESS_CUM_OUT
   IFS= read -r SESS_CUM_CW
   IFS= read -r SESS_CUM_CR
+  IFS= read -r SESS_SNAP_BASE_IN
+  IFS= read -r SESS_SNAP_OUT
+  IFS= read -r SESS_SNAP_CW
+  IFS= read -r SESS_SNAP_CR
 } < <(printf '%s' "$LOG" | jq -r --arg sid "$SESSION_ID" '
   (.billing_month // ""),
   (.week_resets_at // 0 | tostring),
@@ -208,7 +212,11 @@ CURRENT_DATE=$(date +%Y-%m-%d)
   (.sessions[$sid].cum_input_tokens // 0 | tostring),
   (.sessions[$sid].cum_output_tokens // 0 | tostring),
   (.sessions[$sid].cum_cache_write_tokens // 0 | tostring),
-  (.sessions[$sid].cum_cache_read_tokens // 0 | tostring)
+  (.sessions[$sid].cum_cache_read_tokens // 0 | tostring),
+  (.sessions[$sid].snap_base_in // 0 | tostring),
+  (.sessions[$sid].snap_out // 0 | tostring),
+  (.sessions[$sid].snap_cache_write // 0 | tostring),
+  (.sessions[$sid].snap_cache_read // 0 | tostring)
 ')
 
 # If the model changed mid-session, attribute the tokens consumed since the last
@@ -222,10 +230,6 @@ CURRENT_DATE=$(date +%Y-%m-%d)
 # does NOT also receive these tokens (which would double-count per-model).
 PERIOD_PRESWITCH_IN=0
 PERIOD_PRESWITCH_OUT=0
-# Pre-switch cache deltas — 0 on a normal render, set inside the switch block below.
-# Only the per-session cumulative consumes these (periods don't track cache).
-PRESWITCH_CW=0
-PRESWITCH_CR=0
 if [ -n "$SESS_LOG_MODEL" ] && [ "$SESS_LOG_MODEL" != "$MODEL_ID" ]; then
   PRESWITCH_IN=$(( TOTAL_IN - SESS_PREV_IN ))
   PRESWITCH_OUT=$(( TOTAL_OUT - SESS_PREV_OUT ))
@@ -378,18 +382,25 @@ DAY_OUT=$(( DAY_OUT   + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
 CAL_DAY_IN=$(( CAL_DAY_IN  + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
 CAL_DAY_OUT=$(( CAL_DAY_OUT + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
 
-# Per-session cumulative in/out — a never-resetting running total built from the
-# same clamped deltas as the period counters. The raw context_window totals
-# (TOTAL_IN/TOTAL_OUT) reflect *current window occupancy* and legitimately fall on
-# compaction / subagent turns, which made the top-line "📥 in 📤 out" jump up and
-# down. This counter only ever increases, so the headline tracks tokens consumed.
-SESS_CUM_IN=$(( SESS_CUM_IN  + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
-SESS_CUM_OUT=$(( SESS_CUM_OUT + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
-# Cache is tracked separately (shown dimmed on the session line, never folded into
-# in/out). Delta-based like everything else here, so these are net-growth totals —
-# not the sum-of-every-request cache reads the all-time view shows.
-SESS_CUM_CW=$(( SESS_CUM_CW + DELTA_CACHE_WRITE + PRESWITCH_CW ))
-SESS_CUM_CR=$(( SESS_CUM_CR + DELTA_CACHE_READ + PRESWITCH_CR ))
+# Per-session cumulative tokens — four independent running totals, each the sum of
+# its own quantity's clamped per-render delta. Deliberately decoupled from the
+# period/model rebaselining above (DELTA_*/PRESWITCH_*) so they never reset
+# mid-session on a model switch or month rollover, and only ever increase (no drop
+# on compaction — the raw context_window values fall, but a clamped delta adds 0).
+#   IN  = BASE input only. context_window.total_input_tokens is cache-INCLUSIVE
+#         (base + cache_read + cache_write), so we subtract cache to avoid
+#         double-counting what CacheW/CacheR already report separately.
+#   OUT = output only (has no cache component).
+#   CacheW / CacheR are shown as their own dimmed figures on the session line.
+CUR_BASE_IN=$(( TOTAL_IN - CACHE_WRITE - CACHE_READ )); [ "$CUR_BASE_IN" -lt 0 ] && CUR_BASE_IN=0
+D_BASE_IN=$((  CUR_BASE_IN - SESS_SNAP_BASE_IN )); [ "$D_BASE_IN"  -lt 0 ] && D_BASE_IN=0
+D_SESS_OUT=$(( TOTAL_OUT   - SESS_SNAP_OUT      )); [ "$D_SESS_OUT" -lt 0 ] && D_SESS_OUT=0
+D_SESS_CW=$((  CACHE_WRITE  - SESS_SNAP_CW      )); [ "$D_SESS_CW"  -lt 0 ] && D_SESS_CW=0
+D_SESS_CR=$((  CACHE_READ   - SESS_SNAP_CR      )); [ "$D_SESS_CR"  -lt 0 ] && D_SESS_CR=0
+SESS_CUM_IN=$((  SESS_CUM_IN  + D_BASE_IN  ))
+SESS_CUM_OUT=$(( SESS_CUM_OUT + D_SESS_OUT ))
+SESS_CUM_CW=$((  SESS_CUM_CW  + D_SESS_CW  ))
+SESS_CUM_CR=$((  SESS_CUM_CR  + D_SESS_CR  ))
 
 # Read all per-model accumulated values in one jq call
 {
@@ -471,6 +482,10 @@ jq -n \
   --argjson sess_cum_out       "$SESS_CUM_OUT" \
   --argjson sess_cum_cw        "$SESS_CUM_CW" \
   --argjson sess_cum_cr        "$SESS_CUM_CR" \
+  --argjson snap_base_in       "$CUR_BASE_IN" \
+  --argjson snap_out           "$TOTAL_OUT" \
+  --argjson snap_cache_write   "$CACHE_WRITE" \
+  --argjson snap_cache_read    "$CACHE_READ" \
   --argjson model_month_in     "$MODEL_MONTH_IN" \
   --argjson model_month_out    "$MODEL_MONTH_OUT" \
   --argjson model_week_in      "$MODEL_WEEK_IN" \
@@ -532,7 +547,7 @@ jq -n \
     ),
     sessions: (
       (($existing.sessions // {}) + {
-        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr, cum_input_tokens: $sess_cum_in, cum_output_tokens: $sess_cum_out, cum_cache_write_tokens: $sess_cum_cw, cum_cache_read_tokens: $sess_cum_cr}
+        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr, cum_input_tokens: $sess_cum_in, cum_output_tokens: $sess_cum_out, cum_cache_write_tokens: $sess_cum_cw, cum_cache_read_tokens: $sess_cum_cr, snap_base_in: $snap_base_in, snap_out: $snap_out, snap_cache_write: $snap_cache_write, snap_cache_read: $snap_cache_read}
       })
       # Prune sessions: remove zero-token entries, keep last 50, but always preserve current session.
       | to_entries
@@ -762,7 +777,7 @@ fi
 [ -n "$DISPLAY_BRANCH" ] && printf '%b' " | 🌿 ${DISPLAY_BRANCH}"
 printf '%b' " | $(colorize "$CTX_COLOR" "${CTX_BAR}") ${CTX_PCT}%"
 printf '%b' " | 📥 ${SESS_CUM_IN_FMT} 📤 ${SESS_CUM_OUT_FMT}"
-printf '%b' " ${DIM}(cache w ${SESS_CUM_CW_FMT} · r ${SESS_CUM_CR_FMT})${RESET}\n"
+printf '%b' " ${DIM}(✍️ CacheW ${SESS_CUM_CW_FMT} · 📖 CacheR ${SESS_CUM_CR_FMT})${RESET}\n"
 
 # --- 2. Table header ---
 # left area: label(9) + sp(1) + bar(10) + sp(1) + pct(4) = 25 chars, matching data rows
