@@ -98,7 +98,7 @@ fi
 # Strip context window suffix like "(1M context)" or "[1m]"
 MODEL=$(echo "$MODEL" | sed -e 's/ *([^)]*context)//i' -e 's/\[.*\]//')
 
-CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; BLUE='\033[34m'; MAGENTA='\033[35m'; RESET='\033[0m'
+CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; BLUE='\033[34m'; MAGENTA='\033[35m'; DIM='\033[2m'; RESET='\033[0m'
 
 # --- helper: build a 10-char bar from an integer percentage ---
 make_bar() {
@@ -185,6 +185,8 @@ CURRENT_DATE=$(date +%Y-%m-%d)
   IFS= read -r SESS_LOG_MODEL
   IFS= read -r SESS_CUM_IN
   IFS= read -r SESS_CUM_OUT
+  IFS= read -r SESS_CUM_CW
+  IFS= read -r SESS_CUM_CR
 } < <(printf '%s' "$LOG" | jq -r --arg sid "$SESSION_ID" '
   (.billing_month // ""),
   (.week_resets_at // 0 | tostring),
@@ -204,7 +206,9 @@ CURRENT_DATE=$(date +%Y-%m-%d)
   (.sessions[$sid].cache_read_tokens // 0 | tostring),
   (.sessions[$sid].model // ""),
   (.sessions[$sid].cum_input_tokens // 0 | tostring),
-  (.sessions[$sid].cum_output_tokens // 0 | tostring)
+  (.sessions[$sid].cum_output_tokens // 0 | tostring),
+  (.sessions[$sid].cum_cache_write_tokens // 0 | tostring),
+  (.sessions[$sid].cum_cache_read_tokens // 0 | tostring)
 ')
 
 # If the model changed mid-session, attribute the tokens consumed since the last
@@ -218,6 +222,10 @@ CURRENT_DATE=$(date +%Y-%m-%d)
 # does NOT also receive these tokens (which would double-count per-model).
 PERIOD_PRESWITCH_IN=0
 PERIOD_PRESWITCH_OUT=0
+# Pre-switch cache deltas — 0 on a normal render, set inside the switch block below.
+# Only the per-session cumulative consumes these (periods don't track cache).
+PRESWITCH_CW=0
+PRESWITCH_CR=0
 if [ -n "$SESS_LOG_MODEL" ] && [ "$SESS_LOG_MODEL" != "$MODEL_ID" ]; then
   PRESWITCH_IN=$(( TOTAL_IN - SESS_PREV_IN ))
   PRESWITCH_OUT=$(( TOTAL_OUT - SESS_PREV_OUT ))
@@ -377,6 +385,11 @@ CAL_DAY_OUT=$(( CAL_DAY_OUT + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
 # down. This counter only ever increases, so the headline tracks tokens consumed.
 SESS_CUM_IN=$(( SESS_CUM_IN  + DELTA_IN  + PERIOD_PRESWITCH_IN  ))
 SESS_CUM_OUT=$(( SESS_CUM_OUT + DELTA_OUT + PERIOD_PRESWITCH_OUT ))
+# Cache is tracked separately (shown dimmed on the session line, never folded into
+# in/out). Delta-based like everything else here, so these are net-growth totals —
+# not the sum-of-every-request cache reads the all-time view shows.
+SESS_CUM_CW=$(( SESS_CUM_CW + DELTA_CACHE_WRITE + PRESWITCH_CW ))
+SESS_CUM_CR=$(( SESS_CUM_CR + DELTA_CACHE_READ + PRESWITCH_CR ))
 
 # Read all per-model accumulated values in one jq call
 {
@@ -456,6 +469,8 @@ jq -n \
   --argjson sess_cr            "$CACHE_READ" \
   --argjson sess_cum_in        "$SESS_CUM_IN" \
   --argjson sess_cum_out       "$SESS_CUM_OUT" \
+  --argjson sess_cum_cw        "$SESS_CUM_CW" \
+  --argjson sess_cum_cr        "$SESS_CUM_CR" \
   --argjson model_month_in     "$MODEL_MONTH_IN" \
   --argjson model_month_out    "$MODEL_MONTH_OUT" \
   --argjson model_week_in      "$MODEL_WEEK_IN" \
@@ -517,7 +532,7 @@ jq -n \
     ),
     sessions: (
       (($existing.sessions // {}) + {
-        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr, cum_input_tokens: $sess_cum_in, cum_output_tokens: $sess_cum_out}
+        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr, cum_input_tokens: $sess_cum_in, cum_output_tokens: $sess_cum_out, cum_cache_write_tokens: $sess_cum_cw, cum_cache_read_tokens: $sess_cum_cr}
       })
       # Prune sessions: remove zero-token entries, keep last 50, but always preserve current session.
       | to_entries
@@ -695,6 +710,7 @@ model_breakdown_lines() {
 # -----------------------------------------------------------------------
 TOTAL_IN_FMT=$(fmt_tokens "$TOTAL_IN");   TOTAL_OUT_FMT=$(fmt_tokens "$TOTAL_OUT")
 SESS_CUM_IN_FMT=$(fmt_tokens "$SESS_CUM_IN"); SESS_CUM_OUT_FMT=$(fmt_tokens "$SESS_CUM_OUT")
+SESS_CUM_CW_FMT=$(fmt_tokens "$SESS_CUM_CW"); SESS_CUM_CR_FMT=$(fmt_tokens "$SESS_CUM_CR")
 DAY_IN_FMT=$(fmt_tokens   "$DAY_IN");    DAY_OUT_FMT=$(fmt_tokens   "$DAY_OUT");    DAY_TOTAL_FMT=$(fmt_tokens "$((DAY_IN + DAY_OUT))")
 WEEK_IN_FMT=$(fmt_tokens  "$WEEK_IN");   WEEK_OUT_FMT=$(fmt_tokens  "$WEEK_OUT");   WEEK_TOTAL_FMT=$(fmt_tokens "$((WEEK_IN + WEEK_OUT))")
 
@@ -745,7 +761,8 @@ fi
 # Git / worktree branch
 [ -n "$DISPLAY_BRANCH" ] && printf '%b' " | 🌿 ${DISPLAY_BRANCH}"
 printf '%b' " | $(colorize "$CTX_COLOR" "${CTX_BAR}") ${CTX_PCT}%"
-printf '%b' " | 📥 ${SESS_CUM_IN_FMT} 📤 ${SESS_CUM_OUT_FMT}\n"
+printf '%b' " | 📥 ${SESS_CUM_IN_FMT} 📤 ${SESS_CUM_OUT_FMT}"
+printf '%b' " ${DIM}(cache w ${SESS_CUM_CW_FMT} · r ${SESS_CUM_CR_FMT})${RESET}\n"
 
 # --- 2. Table header ---
 # left area: label(9) + sp(1) + bar(10) + sp(1) + pct(4) = 25 chars, matching data rows
