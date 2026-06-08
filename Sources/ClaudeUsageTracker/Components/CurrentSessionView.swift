@@ -22,15 +22,17 @@ struct CurrentSessionView: View {
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.colorForModel(session.session.model))
 
-                // Token metrics — session-level inputTokens includes cache, so subtract for base
-                let baseIn = max(0, session.session.inputTokens
-                    - (session.session.cacheWriteTokens ?? 0)
-                    - (session.session.cacheReadTokens ?? 0))
+                // Token metrics. Prefer the monotonic cumulative totals written by
+                // statusline.sh (base IN / OUT / cache, cleanly separated and stable
+                // across compaction) so this matches the CLI statusline. Fall back to
+                // the raw snapshot for sessions written before cum_* existed — there
+                // inputTokens is cache-inclusive, so subtract cache to get base.
+                let m = Self.sessionMetrics(session.session)
                 HStack(spacing: 8) {
-                    MetricPill(label: "INPUT", value: UsageViewModel.formatTokens(baseIn))
-                    MetricPill(label: "OUTPUT", value: UsageViewModel.formatTokens(session.session.outputTokens))
-                    MetricPill(label: "CACHE W", value: UsageViewModel.formatTokens(session.session.cacheWriteTokens ?? 0))
-                    MetricPill(label: "CACHE R", value: UsageViewModel.formatTokens(session.session.cacheReadTokens ?? 0))
+                    MetricPill(label: "INPUT", value: UsageViewModel.formatTokens(m.input))
+                    MetricPill(label: "OUTPUT", value: UsageViewModel.formatTokens(m.output))
+                    MetricPill(label: "CACHE W", value: UsageViewModel.formatTokens(m.cacheW))
+                    MetricPill(label: "CACHE R", value: UsageViewModel.formatTokens(m.cacheR))
                 }
 
                 // Per-model breakdown (from 5h period data)
@@ -65,6 +67,18 @@ struct CurrentSessionView: View {
         }
         .padding(12)
         .background(Theme.bgCard, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Prefer the monotonic cumulative totals written by statusline.sh (base IN /
+    /// OUT / cache, cleanly separated and stable across compaction) so this matches
+    /// the CLI statusline. Fall back to the raw snapshot for sessions written before
+    /// cum_* existed — there inputTokens is cache-inclusive, so subtract cache.
+    static func sessionMetrics(_ s: SessionTokens) -> (input: Int, output: Int, cacheW: Int, cacheR: Int) {
+        if let cumIn = s.cumInputTokens, let cumOut = s.cumOutputTokens {
+            return (cumIn, cumOut, s.cumCacheWriteTokens ?? 0, s.cumCacheReadTokens ?? 0)
+        }
+        let baseIn = max(0, s.inputTokens - (s.cacheWriteTokens ?? 0) - (s.cacheReadTokens ?? 0))
+        return (baseIn, s.outputTokens, s.cacheWriteTokens ?? 0, s.cacheReadTokens ?? 0)
     }
 }
 
