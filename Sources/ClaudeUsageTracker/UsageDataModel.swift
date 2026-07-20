@@ -20,6 +20,18 @@ struct MonthlyUsage: Codable {
     let currentSessionId: String?
     let models: [String: ModelTokens]
     let sessions: [String: SessionTokens]
+    // Claude Code v2.1 signals (statusline schema_version >= 3). All optional so
+    // older monthly_usage.json files still decode. Cost is the authoritative
+    // cumulative consumption metric under the v2.1.132 context-token change; it is
+    // per-session and resets on /clear, so it belongs to the current session only.
+    let schemaVersion: Int?
+    let sessionCostUsd: Double?
+    let sessionDurationMs: Int?
+    let sessionApiDurationMs: Int?
+    let sessionLinesAdded: Int?
+    let sessionLinesRemoved: Int?
+    let contextWindowSize: Int?
+    let contextUsedPct: Double?
 
     enum CodingKeys: String, CodingKey {
         case billingMonth = "billing_month"
@@ -38,6 +50,14 @@ struct MonthlyUsage: Codable {
         case weekUsedPct = "week_used_pct"
         case currentSessionId = "current_session_id"
         case models, sessions
+        case schemaVersion = "schema_version"
+        case sessionCostUsd = "session_cost_usd"
+        case sessionDurationMs = "session_duration_ms"
+        case sessionApiDurationMs = "session_api_duration_ms"
+        case sessionLinesAdded = "session_lines_added"
+        case sessionLinesRemoved = "session_lines_removed"
+        case contextWindowSize = "context_window_size"
+        case contextUsedPct = "context_used_pct"
     }
 }
 
@@ -116,6 +136,10 @@ struct SessionTokens: Codable {
     let cumOutputTokens: Int?
     let cumCacheWriteTokens: Int?
     let cumCacheReadTokens: Int?
+    // Per-session cost (USD) and wall-clock duration (ms) from Claude Code's
+    // cost.* fields. Optional — absent for sessions written before schema v3.
+    let costUsd: Double?
+    let durationMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -127,6 +151,8 @@ struct SessionTokens: Codable {
         case cumOutputTokens = "cum_output_tokens"
         case cumCacheWriteTokens = "cum_cache_write_tokens"
         case cumCacheReadTokens = "cum_cache_read_tokens"
+        case costUsd = "cost_usd"
+        case durationMs = "duration_ms"
     }
 }
 

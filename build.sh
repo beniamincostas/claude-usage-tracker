@@ -36,9 +36,9 @@ cat > "${APP_DIR}/Contents/Info.plist" << 'PLIST'
     <key>CFBundleIdentifier</key>
     <string>com.fiskaly.claude-usage-tracker</string>
     <key>CFBundleVersion</key>
-    <string>2.0.3</string>
+    <string>2.1.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.0.3</string>
+    <string>2.1.0</string>
     <key>CFBundleExecutable</key>
     <string>ClaudeUsageTracker</string>
     <key>CFBundlePackageType</key>
@@ -91,7 +91,7 @@ echo "   LaunchAgent created (autostart at login)."
 echo ""
 echo "=== Starting ${APP_NAME} ==="
 # Kill any existing instance first, then launch exactly one
-pkill -f "${APP_NAME}" 2>/dev/null || true
+pkill -f "Applications/${APP_NAME}.app" 2>/dev/null || true  # precise: don't match Beta/PREVIEW bundles or editors
 sleep 0.5
 open "${INSTALL_DIR}/${APP_NAME}.app"
 

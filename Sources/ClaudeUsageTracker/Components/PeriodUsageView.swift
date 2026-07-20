@@ -33,6 +33,18 @@ struct PeriodUsageView: View {
         }
     }
 
+    /// Full-opacity variant for FOREGROUND text/icons. `alertBorderColor` softens
+    /// the warning tint to 0.6 for the border stroke; using that same 0.6 color on
+    /// the icon and countdown text made them hard to read at the 90–95% band.
+    private var alertForegroundColor: Color {
+        switch alertLevel {
+        case .maxed100: return Theme.barMaxed
+        case .critical95: return Theme.barCritical
+        case .warning90: return Theme.barWarning
+        case .normal: return Theme.accent
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Alert banner at threshold
@@ -53,7 +65,7 @@ struct PeriodUsageView: View {
                 HStack(spacing: 5) {
                     Image(systemName: icon)
                         .font(.system(size: 10))
-                        .foregroundStyle(alertLevel >= .warning90 ? alertBorderColor : Theme.accent)
+                        .foregroundStyle(alertLevel >= .warning90 ? alertForegroundColor : Theme.accent)
                     Text(title)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.textSecondary)
@@ -64,7 +76,7 @@ struct PeriodUsageView: View {
 
                 Text(countdown)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(alertLevel >= .warning90 ? alertBorderColor : Theme.textTertiary)
+                    .foregroundStyle(alertLevel >= .warning90 ? alertForegroundColor : Theme.textTertiary)
             }
 
             // Main progress bar + percentage (real data only)

@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.1.0 (2026-07-20)
+
+Feature release adopting Claude Code v2.1 statusline signals. Additive and backward-compatible — older `monthly_usage.json` files and pre-v2.1 Claude Code payloads still work.
+
+### Context behind this release
+Claude Code **v2.1.132** changed `context_window.total_input_tokens` / `total_output_tokens` from *cumulative session totals* to *current context-window occupancy* (they now rise as context fills and drop on `/compact` and `/clear`). Cumulative token counts — especially output — are therefore no longer derivable from the statusline payload alone. This release leans on the signals that remain authoritative: the rate-limit percentages and the new per-session **cost**.
+
+### Statusline
+- **Session cost** — `cost.total_cost_usd` shown as `💰 $x.xx` on the session line. It's the authoritative cumulative consumption metric now; per-session, resets on `/clear`.
+- **Accurate context size** — the context hint shows `(used/size)` using `context_window.context_window_size`, so 1M-context models read `(80k/1.0M)` instead of assuming 200k.
+- **Status badges** — `💭` extended thinking (`thinking.enabled`), `⚡` fast mode (`fast_mode`), and a red `⚠️200k` when `exceeds_200k_tokens` is set — alongside the existing `🧠` effort badge.
+- **Repo + PR metadata** — repo slug `owner/name` from `workspace.repo.*` (no git subprocess), and an open-PR chip `PR #<n> <state>` from `pr.*`, colour-coded by review state.
+
+### App
+- **Session cost / duration / lines** — the Current Session panel now shows `💰` cost, elapsed time, and `+added −removed` lines when Claude Code reports them.
+- **All-time freshness indicator** — the all-time panel (fed by the external `stats-cache.json`) now shows `Data as of <date>` and flags it in orange when older than 3 days, so a stalled external writer no longer silently presents month-old figures as current.
+- **Honest API User-Agent** — the usage API request now sends a stable `ClaudeUsageTracker/<version>` User-Agent (previously URLSession's opaque default, which appears to attract heavier rate-limiting). The app does **not** impersonate the Claude Code CLI.
+
+### Data
+- `monthly_usage.json` gains `schema_version: 3`, top-level `session_cost_usd` / `session_duration_ms` / `context_window_size` / `context_used_pct`, and per-session `cost_usd` / `duration_ms`. All optional and ignored by older readers.
+
 ## v2.0.3 (2026-06-08)
 
 Bug-fix and statusline-accuracy release. No breaking changes.

@@ -102,6 +102,9 @@ struct ClaudeUsageTrackerApp: App {
 
     private func logout() {
         oauthManager.logout()
+        // Manual logout is deliberate — clear any stale transient reason (e.g. a
+        // prior "networkError") so the auth screen doesn't show a misleading banner.
+        oauthManager.logoutReason = nil
         viewModel.stopAndReset()
         keychainApproved = false
         authMethod = ""

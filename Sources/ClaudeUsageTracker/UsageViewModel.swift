@@ -223,14 +223,14 @@ final class UsageViewModel: ObservableObject {
     // MARK: - Activity-Driven API Polling
     //
     // Two rates:
-    //   Active — poll every `pollInterval` (120s base), when Claude activity detected
+    //   Active — poll every `pollInterval` (60s base), when Claude activity detected
     //   Idle   — poll every `idlePollInterval` (300s), after cooldown with no activity
     //
     // The polling loop NEVER stops — it just slows down. This ensures the menu bar
     // always reflects current usage even when the 5-hour window slides passively.
     //
     // Activity triggers: FileWatcher (CLI), process check (desktop app / CLI)
-    // Backoff: on 429 → double interval (120→240→480→max 900). On success → reset.
+    // Backoff: on 429 → double interval (60→120→240→480→max 900). On success → reset.
 
     private func startAPIPolling() {
         guard apiPollingTask == nil else { return }
@@ -446,6 +446,51 @@ final class UsageViewModel: ObservableObject {
             .map { (id: $0.key, session: $0.value) }
     }
 
+    // MARK: - Session Cost & Context (Claude Code v2.1 signals)
+
+    /// Current session cost in USD. Prefers the per-session value, falling back to
+    /// the top-level snapshot. `nil` when no cost has been recorded (older data or
+    /// a fresh session). This is the authoritative cumulative consumption metric
+    /// under the v2.1.132 context-token semantics change; it resets on `/clear`.
+    var sessionCostUsd: Double? {
+        if let c = currentSession?.session.costUsd, c > 0 { return c }
+        if let c = usage?.sessionCostUsd, c > 0 { return c }
+        return nil
+    }
+
+    var sessionCostFormatted: String? {
+        guard let c = sessionCostUsd else { return nil }
+        return String(format: "$%.2f", c)
+    }
+
+    /// Wall-clock duration of the current session, formatted (e.g. "1h 12m", "13m").
+    var sessionDurationFormatted: String? {
+        guard let ms = usage?.sessionDurationMs, ms > 0 else { return nil }
+        let totalSeconds = ms / 1000
+        let h = totalSeconds / 3600
+        let m = (totalSeconds % 3600) / 60
+        let s = totalSeconds % 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m \(s)s" }
+        return "\(s)s"
+    }
+
+    /// Lines added/removed this session, when Claude Code reports them.
+    var sessionLinesChanged: (added: Int, removed: Int)? {
+        let a = usage?.sessionLinesAdded ?? 0
+        let r = usage?.sessionLinesRemoved ?? 0
+        return (a > 0 || r > 0) ? (a, r) : nil
+    }
+
+    /// Max context window (200k or 1M). Defaults to 200k if unknown.
+    var contextWindowSize: Int { usage?.contextWindowSize ?? 200_000 }
+
+    /// Current context-window fill percentage (from statusline), if available.
+    var contextUsedPercentage: Double? {
+        guard let p = usage?.contextUsedPct, p >= 0 else { return nil }
+        return p
+    }
+
     // MARK: - Extra Token Tracking (tokens above included plan limits)
 
     /// Total tokens for a period across all models (all 4 types: input + output + cache_write + cache_read).
@@ -584,6 +629,51 @@ final class UsageViewModel: ObservableObject {
 
     var totalMessagesAllTime: Int {
         statsCache?.totalMessages ?? 0
+    }
+
+    // MARK: - Stats-Cache Freshness
+
+    private static let utcTimeZone = TimeZone(identifier: "UTC")!
+
+    private static let statsCacheDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = utcTimeZone
+        return f
+    }()
+
+    // Day-diff calendar pinned to UTC to match the UTC-parsed date; using
+    // Calendar.current (local TZ) against a UTC-midnight date was off-by-one near
+    // local midnight for users far from UTC.
+    private static let utcCalendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = utcTimeZone
+        return c
+    }()
+
+    /// Days since stats-cache.json's `lastComputedDate`, or nil if unavailable.
+    /// stats-cache.json is produced by an external tool (not this app); if that
+    /// writer stalls, the all-time figures silently freeze — this exposes that.
+    private var statsCacheAgeDays: Int? {
+        guard let s = statsCache?.lastComputedDate,
+              let date = Self.statsCacheDateFormatter.date(from: String(s.prefix(10))) else { return nil }
+        return Self.utcCalendar.dateComponents([.day], from: date, to: .now).day
+    }
+
+    /// True when the all-time data is more than 3 days old.
+    var isStatsCacheStale: Bool {
+        (statsCacheAgeDays ?? 0) > 3
+    }
+
+    /// Human-readable freshness line for the all-time panel, e.g. "Data as of 2026-06-09 (41d ago)".
+    var statsCacheAgeDescription: String? {
+        guard let s = statsCache?.lastComputedDate else { return nil }
+        let dateStr = String(s.prefix(10))
+        guard let days = statsCacheAgeDays else { return "Data as of \(dateStr)" }
+        if days <= 0 { return "Data as of \(dateStr) (today)" }
+        if days == 1 { return "Data as of \(dateStr) (1d ago)" }
+        return "Data as of \(dateStr) (\(days)d ago)"
     }
 
     // MARK: - Rate Limit Percentages (API first, JSON fallback)
@@ -864,6 +954,16 @@ final class UsageViewModel: ObservableObject {
     var isAPIDataFresh: Bool {
         guard apiUsage != nil, let lastSuccess = lastAPISuccessTime else { return false }
         return Date.now.timeIntervalSince(lastSuccess) < 300
+    }
+
+    /// Whether the DISPLAYED percentage is stale. The headline % is sourced from
+    /// whichever of file (statusline) or API is fresher (see `fileIsFresherThanAPI`),
+    /// so staleness must consider BOTH — otherwise the "stale" marker contradicts a
+    /// live file-sourced number during an active session.
+    var isDisplayStale: Bool {
+        let apiFresh = isAPIDataFresh
+        let fileFresh = lastFileUpdateTime.map { Date.now.timeIntervalSince($0) < 300 } ?? false
+        return !(apiFresh || fileFresh)
     }
 
     // MARK: - Alert Levels

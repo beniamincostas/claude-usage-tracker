@@ -42,7 +42,7 @@ struct AuthChoiceView: View {
                         }
                         .buttonStyle(.borderedProminent).tint(Theme.accent)
                         .disabled(codeInput.isEmpty)
-                        Button("Cancel") { oauthManager.isLoggingIn = false; codeInput = "" }
+                        Button("Cancel") { oauthManager.isLoggingIn = false; codeInput = ""; oauthManager.loginError = nil }
                             .buttonStyle(.plain).foregroundStyle(Theme.textPrimary).font(.system(size: 11))
                     }
                 }
@@ -61,7 +61,7 @@ struct AuthChoiceView: View {
 
                     Text("or").font(.system(size: 11)).foregroundStyle(.tertiary)
 
-                    Button(action: onKeychainSelected) {
+                    Button(action: { oauthManager.loginError = nil; onKeychainSelected() }) {
                         VStack(spacing: 4) {
                             Text("Use Claude Code Keychain").font(.system(size: 13, weight: .semibold))
                             Text("Reads token from Claude Code — requires CLI installed").font(.system(size: 10)).foregroundStyle(.secondary)

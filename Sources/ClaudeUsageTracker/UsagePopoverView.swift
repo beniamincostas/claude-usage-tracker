@@ -57,7 +57,7 @@ struct UsagePopoverView: View {
                                 modelBreakdown: showTokenDetails ? viewModel.modelBreakdown(for: .fiveHour) : [],
                                 extraTokens: showTokenDetails ? viewModel.fiveHourExtraTokens : nil,
                                 timeToLimit: viewModel.fiveHourTimeToLimit,
-                                isStale: !viewModel.isAPIDataFresh
+                                isStale: viewModel.isDisplayStale
                             )
                         }
 
@@ -77,7 +77,7 @@ struct UsagePopoverView: View {
                                 extraTokens: showTokenDetails ? viewModel.weekExtraTokens : nil,
                                 timeToLimit: viewModel.weekTimeToLimit,
                                 subBuckets: viewModel.weekSubBuckets,
-                                isStale: !viewModel.isAPIDataFresh
+                                isStale: viewModel.isDisplayStale
                             )
                         }
 
@@ -150,11 +150,11 @@ struct UsagePopoverView: View {
                 Spacer()
                 HStack(spacing: 3) {
                     Circle()
-                        .fill(viewModel.isAPIDataFresh ? Theme.accent : Color.orange)
+                        .fill(viewModel.isDisplayStale ? Color.orange : Theme.accent)
                         .frame(width: 4, height: 4)
                     Text(viewModel.timeSinceUpdate)
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(viewModel.isAPIDataFresh ? Theme.textTertiary : Color.orange)
+                        .foregroundStyle(viewModel.isDisplayStale ? Color.orange : Theme.textTertiary)
                 }
             }
         }
@@ -289,6 +289,19 @@ struct UsagePopoverView: View {
                     Text("Since \(dateStr)")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
+                }
+
+                // All-time figures come from stats-cache.json, which is maintained by
+                // an external tool. Surface how fresh it is so a stalled writer doesn't
+                // silently present month-old numbers as current.
+                if let computed = viewModel.statsCacheAgeDescription {
+                    HStack(spacing: 4) {
+                        Image(systemName: viewModel.isStatsCacheStale ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
+                            .font(.system(size: 8))
+                        Text(computed)
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundStyle(viewModel.isStatsCacheStale ? Color.orange : Theme.textTertiary)
                 }
 
                 VStack(spacing: 6) {
