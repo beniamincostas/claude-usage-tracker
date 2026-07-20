@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="ClaudeUsageTracker"
 BUNDLE_ID="com.fiskaly.claude-usage-tracker"
-VERSION="2.0.3"
+VERSION="2.1.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/.build/release"
 APP_DIR="${SCRIPT_DIR}/${APP_NAME}.app"
@@ -127,7 +127,7 @@ fi
 
 # 1. Copy app to ~/Applications (CRITICAL — abort if fails)
 mkdir -p "$DEST_DIR"
-pkill -f "${APP_NAME}" 2>/dev/null || true
+pkill -f "${DEST_DIR}/${APP_NAME}.app" 2>/dev/null || true  # precise path — never Beta/PREVIEW bundles or editors
 sleep 0.3
 rm -rf "${DEST_DIR}/${APP_NAME}.app"
 if cp -R "$SOURCE" "${DEST_DIR}/" 2>/dev/null; then
@@ -199,8 +199,13 @@ sl_path = sys.argv[2]
 try:
     with open(path) as f:
         settings = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
+except FileNotFoundError:
     settings = {}
+except json.JSONDecodeError:
+    # Do NOT reset to {} — that would silently wipe every other setting if the
+    # file is transiently corrupt or being written by a concurrent Claude Code.
+    sys.stderr.write('settings.json is not valid JSON — left untouched\n')
+    sys.exit(1)
 settings['statusLine'] = {'type': 'command', 'command': sl_path}
 tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
 with os.fdopen(tmp_fd, 'w') as f:
@@ -254,10 +259,12 @@ if [ "$HAS_CLAUDE" = true ]; then
 fi
 echo ""
 echo "  To uninstall (paste into Terminal):"
-echo "    pkill ${APP_NAME}"
+echo "    pkill -f Applications/${APP_NAME}.app"
 echo "    launchctl unload ${LAUNCH_AGENT_PLIST}"
 echo "    rm ${LAUNCH_AGENT_PLIST}"
 echo "    rm -rf ~/Applications/${APP_NAME}.app"
+echo "    rm -f ~/.claude/statusline.sh"
+echo "    # then remove the \"statusLine\" block from ~/.claude/settings.json"
 echo ""
 INSTALL
 
@@ -274,10 +281,12 @@ INSTALL (paste in Terminal):
 
 UNINSTALL:
 
-  pkill ClaudeUsageTracker
+  pkill -f Applications/ClaudeUsageTracker.app
   launchctl unload ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
   rm ~/Library/LaunchAgents/com.fiskaly.claude-usage-tracker.plist
   rm -rf ~/Applications/ClaudeUsageTracker.app
+  rm -f ~/.claude/statusline.sh
+  # then remove the "statusLine" block from ~/.claude/settings.json
 
 Docs: https://fiskaly.atlassian.net/wiki/spaces/fin/pages/2753200183
 GitHub: https://github.com/beniamincostas/claude-usage-tracker

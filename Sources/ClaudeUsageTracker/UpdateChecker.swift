@@ -5,7 +5,7 @@ import AppKit
 actor UpdateChecker {
     private static let owner = "beniamincostas"
     private static let repo = "claude-usage-tracker"
-    static let currentVersion = "2.0.3"
+    static let currentVersion = "2.1.0"
 
     struct Release: Decodable {
         let tag_name: String
@@ -75,7 +75,7 @@ actor UpdateChecker {
             // #5: Validate URL scheme and domain before opening
             if let downloadURL = URL(string: url),
                downloadURL.scheme == "https",
-               downloadURL.host?.hasSuffix("github.com") == true {
+               downloadURL.host == "github.com" || downloadURL.host?.hasSuffix(".github.com") == true {
                 NSWorkspace.shared.open(downloadURL)
             }
         }

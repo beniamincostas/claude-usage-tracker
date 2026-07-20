@@ -22,6 +22,31 @@ struct CurrentSessionView: View {
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.colorForModel(session.session.model))
 
+                // Session cost + duration + lines changed (Claude Code v2.1 signals).
+                // Cost is the authoritative cumulative consumption metric; shown only
+                // when present so older data / fresh sessions stay clean.
+                if viewModel.sessionCostFormatted != nil || viewModel.sessionDurationFormatted != nil {
+                    HStack(spacing: 10) {
+                        if let cost = viewModel.sessionCostFormatted {
+                            Label(cost, systemImage: "dollarsign.circle.fill")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.green)
+                        }
+                        if let dur = viewModel.sessionDurationFormatted {
+                            Label(dur, systemImage: "clock")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Theme.textTertiary)
+                                .labelStyle(.titleAndIcon)
+                        }
+                        if let lines = viewModel.sessionLinesChanged {
+                            Text("+\(lines.added) −\(lines.removed)")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textTertiary)
+                        }
+                        Spacer()
+                    }
+                }
+
                 // Token metrics. Prefer the monotonic cumulative totals written by
                 // statusline.sh (base IN / OUT / cache, cleanly separated and stable
                 // across compaction) so this matches the CLI statusline. Fall back to

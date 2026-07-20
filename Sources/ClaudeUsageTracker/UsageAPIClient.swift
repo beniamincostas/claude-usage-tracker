@@ -82,6 +82,12 @@ actor UsageAPIClient {
         request.httpMethod = "GET"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        // Send a stable, honest identifying User-Agent. URLSession's default UA is
+        // opaque and appears to attract aggressive rate-limiting on this endpoint;
+        // a clear app identifier is the polite fix. We do NOT impersonate the
+        // Claude Code CLI — the goal is reliable data without misrepresentation.
+        request.setValue("ClaudeUsageTracker/\(UpdateChecker.currentVersion) (macOS menu-bar; +github.com/beniamincostas/claude-usage-tracker)",
+                         forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 10
 
         do {

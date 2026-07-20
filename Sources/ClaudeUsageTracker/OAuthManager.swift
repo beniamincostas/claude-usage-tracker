@@ -197,6 +197,14 @@ final class OAuthManager: ObservableObject {
                 // #5: Catch all errors (including CancellationError), not just NSError
                 if isOwner { pendingRefresh = nil }
 
+                // A cancellation (e.g. a concurrent logout cancelled the shared
+                // refresh Task, or the app is tearing down) is NOT an auth failure.
+                // Treat it as transient: keep tokens, don't force a logout, don't
+                // set a misleading "sessionExpired" reason.
+                if error is CancellationError {
+                    return nil
+                }
+
                 // #7: Network errors — don't delete tokens, just return nil
                 if (error as? URLError) != nil || (error as NSError).domain == NSURLErrorDomain {
                     logoutReason = "networkError"
@@ -308,7 +316,11 @@ final class OAuthManager: ObservableObject {
                 let sleepDuration: TimeInterval
                 if let expiresAt = loadExpiresAt() {
                     let timeUntilExpiry = expiresAt - Date.now.timeIntervalSince1970
-                    sleepDuration = max(60, timeUntilExpiry - 300)  // refresh 5min before expiry, min 60s
+                    // Clamp to [60s, 1h]. The lower bound avoids a hot loop; the upper
+                    // bound means a corrupt-but-finite far-future expiresAt (e.g. ms
+                    // stored as s) can't park the refresh loop for years — it re-checks
+                    // hourly and the on-demand path stays correct meanwhile.
+                    sleepDuration = min(3600, max(60, timeUntilExpiry - 300))
                 } else {
                     sleepDuration = 1800
                 }

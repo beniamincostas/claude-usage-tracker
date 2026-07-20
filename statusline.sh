@@ -46,6 +46,21 @@ input=$(cat)
   IFS= read -r WEEK_PCT_RAW
   IFS= read -r WEEK_RESETS
   IFS= read -r EFFORT
+  IFS= read -r CTX_SIZE
+  IFS= read -r CUR_IN
+  IFS= read -r CUR_OUT
+  IFS= read -r COST_USD
+  IFS= read -r DUR_MS
+  IFS= read -r API_DUR_MS
+  IFS= read -r LINES_ADD
+  IFS= read -r LINES_REM
+  IFS= read -r THINKING
+  IFS= read -r FAST_MODE
+  IFS= read -r EXCEEDS_200K
+  IFS= read -r REPO_OWNER
+  IFS= read -r REPO_NAME
+  IFS= read -r PR_NUMBER
+  IFS= read -r PR_STATE
 } < <(printf '%s' "$input" | jq -r '
   (.model.display_name // ""),
   (.model.id // "unknown"),
@@ -64,8 +79,33 @@ input=$(cat)
   (.rate_limits.five_hour.resets_at | if . == null then "" else tostring end),
   (.rate_limits.seven_day.used_percentage // ""),
   (.rate_limits.seven_day.resets_at | if . == null then "" else tostring end),
-  (.effort.level // "")
+  (.effort.level // ""),
+  (.context_window.context_window_size | if (type == "number" and . > 0) then . else 200000 end | tostring),
+  (.context_window.current_usage.input_tokens // 0 | tostring),
+  (.context_window.current_usage.output_tokens // 0 | tostring),
+  (.cost.total_cost_usd | if type == "number" then . else 0 end | tostring),
+  (.cost.total_duration_ms | if type == "number" then floor else 0 end | tostring),
+  (.cost.total_api_duration_ms | if type == "number" then floor else 0 end | tostring),
+  (.cost.total_lines_added | if type == "number" then floor else 0 end | tostring),
+  (.cost.total_lines_removed | if type == "number" then floor else 0 end | tostring),
+  (.thinking.enabled // false | tostring),
+  (.fast_mode // false | tostring),
+  (.exceeds_200k_tokens // false | tostring),
+  (.workspace.repo.owner // ""),
+  (.workspace.repo.name // ""),
+  (.pr.number | if . == null then "" else tostring end),
+  (.pr.review_state // "")
 ')
+
+# --- Token-accounting semantics note (Claude Code v2.1.132+) ------------------
+# As of CC v2.1.132, context_window.total_input_tokens / total_output_tokens
+# report CURRENT context-window usage (they rise as context fills and DROP on
+# /compact and /clear), NOT cumulative session totals as they did before.
+# The period accumulation below (DELTA = TOTAL - PREV, negatives clamped to 0)
+# therefore yields a BEST-EFFORT proxy for input growth only; output is just the
+# most-recent response and cannot be summed into a true cumulative figure.
+# The authoritative usage signals are the rate-limit percentages (5h / 7d) and
+# cost.total_cost_usd (persisted below). The macOS app treats those as primary.
 
 # Convert ISO 8601 resets_at to epoch seconds (handles both epoch ints and ISO strings)
 iso_to_epoch() {
@@ -294,6 +334,13 @@ if [ "$STORED_MONTH" != "$CURRENT_MONTH" ]; then
   DAY_OUT=0
   CAL_DAY_IN=0
   CAL_DAY_OUT=0
+  # If a model switch ALSO fired this render, its pre-switch delta was already
+  # added to the (now-zeroed) old month and credited to the old model; the
+  # re-baseline below sets SESS_PREV_*=0 so the full TOTAL flows in as a fresh
+  # delta. Adding PERIOD_PRESWITCH_* on top of that would double-count it into
+  # the new month, so clear it here.
+  PERIOD_PRESWITCH_IN=0
+  PERIOD_PRESWITCH_OUT=0
   # Re-baseline the current session from scratch (delta = TOTAL_IN - 0 = all tokens)
   SESS_PREV_IN=0
   SESS_PREV_OUT=0
@@ -504,9 +551,24 @@ jq -n \
   --argjson model_cal_day_cr   "$MODEL_CAL_DAY_CR" \
   --arg    day_used_pct        "${DAY_PCT_RAW:-}" \
   --arg    week_used_pct       "${WEEK_PCT_RAW:-}" \
+  --argjson cost_usd           "$COST_USD" \
+  --argjson dur_ms             "$DUR_MS" \
+  --argjson api_dur_ms         "$API_DUR_MS" \
+  --argjson lines_add          "$LINES_ADD" \
+  --argjson lines_rem          "$LINES_REM" \
+  --argjson ctx_size           "$CTX_SIZE" \
+  --argjson ctx_pct            "$CTX_PCT" \
   --argjson existing           "$LOG" \
   '{
+    schema_version:         3,
     billing_month:          $billing_month,
+    session_cost_usd:       $cost_usd,
+    session_duration_ms:    $dur_ms,
+    session_api_duration_ms: $api_dur_ms,
+    session_lines_added:    $lines_add,
+    session_lines_removed:  $lines_rem,
+    context_window_size:    $ctx_size,
+    context_used_pct:       $ctx_pct,
     month_input_tokens:     $month_in,
     month_output_tokens:    $month_out,
     week_input_tokens:      $week_in,
@@ -547,7 +609,7 @@ jq -n \
     ),
     sessions: (
       (($existing.sessions // {}) + {
-        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr, cum_input_tokens: $sess_cum_in, cum_output_tokens: $sess_cum_out, cum_cache_write_tokens: $sess_cum_cw, cum_cache_read_tokens: $sess_cum_cr, snap_base_in: $snap_base_in, snap_out: $snap_out, snap_cache_write: $snap_cache_write, snap_cache_read: $snap_cache_read}
+        ($sid): {model: $mid, input_tokens: $sess_in, output_tokens: $sess_out, cache_write_tokens: $sess_cw, cache_read_tokens: $sess_cr, cum_input_tokens: $sess_cum_in, cum_output_tokens: $sess_cum_out, cum_cache_write_tokens: $sess_cum_cw, cum_cache_read_tokens: $sess_cum_cr, snap_base_in: $snap_base_in, snap_out: $snap_out, snap_cache_write: $snap_cache_write, snap_cache_read: $snap_cache_read, cost_usd: $cost_usd, duration_ms: $dur_ms}
       })
       # Prune sessions: remove zero-token entries, keep last 50, but always preserve current session.
       | to_entries
@@ -732,6 +794,9 @@ WEEK_IN_FMT=$(fmt_tokens  "$WEEK_IN");   WEEK_OUT_FMT=$(fmt_tokens  "$WEEK_OUT")
 # -----------------------------------------------------------------------
 # Context bar
 # -----------------------------------------------------------------------
+# Coerce to 0 if empty/non-numeric (e.g. if the stdin jq ever partially failed),
+# same defensive guard as make_bar (#B1), so the integer tests can't abort.
+[[ "$CTX_PCT" =~ ^[0-9]+$ ]] || CTX_PCT=0
 if [ "$CTX_PCT" -ge 90 ]; then CTX_COLOR="$RED"
 elif [ "$CTX_PCT" -ge 70 ]; then CTX_COLOR="$YELLOW"
 else CTX_COLOR="$GREEN"; fi
@@ -743,6 +808,30 @@ git -C "$DIR" rev-parse --git-dir > /dev/null 2>&1 && \
 
 # Prefer worktree branch if available
 DISPLAY_BRANCH="${WORKTREE_BRANCH:-$GIT_BRANCH}"
+
+# Repo slug (owner/name) from Claude Code's workspace.repo — no subprocess needed.
+# Absent outside git repos; purely additive to the branch display above.
+REPO_SLUG=""
+[ -n "$REPO_OWNER" ] && [ -n "$REPO_NAME" ] && REPO_SLUG="${REPO_OWNER}/${REPO_NAME}"
+
+# -----------------------------------------------------------------------
+# New CC v2.1 signals: session cost, context-window size, status badges
+# -----------------------------------------------------------------------
+# Cost is the authoritative cumulative consumption metric under the v2.1.132
+# context-token semantics change. It is per-session and resets on /clear.
+COST_STR=""
+if awk -v c="$COST_USD" 'BEGIN{exit !(c+0 > 0)}' 2>/dev/null; then
+  COST_STR=$(awk -v c="$COST_USD" 'BEGIN{printf "$%.2f", c}')
+fi
+
+# Context-window size (200000 or 1000000) → compact label for the "used/size" hint.
+CTX_SIZE_FMT=$(fmt_tokens "$CTX_SIZE")
+
+# Status badges — booleans arrive from jq as the strings "true"/"false".
+BADGES=""
+[ "$THINKING" = "true" ]     && BADGES="${BADGES} 💭"
+[ "$FAST_MODE" = "true" ]    && BADGES="${BADGES} ⚡"
+[ "$EXCEEDS_200K" = "true" ] && BADGES="${BADGES} ${RED}⚠️200k${RESET}"
 
 # -----------------------------------------------------------------------
 # Output
@@ -763,6 +852,8 @@ if [ -n "$EFFORT" ]; then
   esac
   printf '%b' " $(colorize "$EFF_COLOR" "🧠 ${EFFORT}")"
 fi
+# Status badges: 💭 extended thinking · ⚡ fast mode · ⚠️200k context over 200k
+[ -n "$BADGES" ] && printf '%b' "$BADGES"
 # Agent label
 [ -n "$AGENT_NAME" ] && printf '%b' " ${MAGENTA}(${AGENT_NAME})${RESET}"
 # Vim mode
@@ -773,9 +864,24 @@ if [ -n "$SESSION_NAME" ]; then
 else
   printf '%b' " 📁 ${DIR##*/}"
 fi
-# Git / worktree branch
+# Repo slug (owner/name) from workspace.repo, then git/worktree branch
+[ -n "$REPO_SLUG" ] && printf '%b' " | ${DIM}${REPO_SLUG}${RESET}"
 [ -n "$DISPLAY_BRANCH" ] && printf '%b' " | 🌿 ${DISPLAY_BRANCH}"
-printf '%b' " | $(colorize "$CTX_COLOR" "${CTX_BAR}") ${CTX_PCT}%"
+# Open PR (number + review state), when Claude Code reports one
+if [ -n "$PR_NUMBER" ]; then
+  case "$PR_STATE" in
+    approved)          PR_COLOR="$GREEN"  ;;
+    changes_requested) PR_COLOR="$RED"    ;;
+    pending)           PR_COLOR="$YELLOW" ;;
+    *)                 PR_COLOR="$DIM"    ;;
+  esac
+  PR_TRAIL=""; [ -n "$PR_STATE" ] && PR_TRAIL=" ${PR_STATE}"
+  printf '%b' " | $(colorize "$PR_COLOR" "PR #${PR_NUMBER}${PR_TRAIL}")"
+fi
+# Context: bar + percent + used/size hint (context_window_size = 200k or 1M)
+printf '%b' " | $(colorize "$CTX_COLOR" "${CTX_BAR}") ${CTX_PCT}% ${DIM}(${TOTAL_IN_FMT}/${CTX_SIZE_FMT})${RESET}"
+# Session cost (authoritative cumulative consumption; resets on /clear)
+[ -n "$COST_STR" ] && printf '%b' " | $(colorize "$GREEN" "💰 ${COST_STR}")"
 printf '%b' " | 📥 ${SESS_CUM_IN_FMT} 📤 ${SESS_CUM_OUT_FMT}"
 printf '%b' " ${DIM}(✍️ CacheW ${SESS_CUM_CW_FMT} · 📖 CacheR ${SESS_CUM_CR_FMT})${RESET}\n"
 
@@ -792,6 +898,7 @@ echo -e "${HDR_PERIOD} ${HDR_BAR} ${HDR_PCT} │ ${HDR_INTOK} │ ${HDR_OUTTOK} 
 # --- 3. 5-hour / rate-limit row (only when data is available) ---
 if [ -n "$DAY_PCT_RAW" ]; then
   DAY_PCT=$(echo "$DAY_PCT_RAW" | cut -d. -f1)
+  [[ "$DAY_PCT" =~ ^[0-9]+$ ]] || DAY_PCT=0   # coerce non-numeric before integer tests (#B1)
   [ "$DAY_PCT" -gt 100 ] && DAY_PCT=100
   # If server reports 0% (Enterprise plans with very high limits), fall back to
   # 5h tokens as % of today's total so the bar still shows meaningful activity
@@ -825,6 +932,7 @@ fi
 # --- 4. Weekly rate limit (only when data is available) ---
 if [ -n "$WEEK_PCT_RAW" ]; then
   WEEK_PCT=$(echo "$WEEK_PCT_RAW" | cut -d. -f1)
+  [[ "$WEEK_PCT" =~ ^[0-9]+$ ]] || WEEK_PCT=0   # coerce non-numeric before integer tests (#B1)
   [ "$WEEK_PCT" -gt 100 ] && WEEK_PCT=100
   if [ "$WEEK_PCT" -ge 90 ]; then WEEK_COLOR="$RED"
   elif [ "$WEEK_PCT" -ge 70 ]; then WEEK_COLOR="$YELLOW"
